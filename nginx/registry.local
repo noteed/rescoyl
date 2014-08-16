@@ -1,0 +1,36 @@
+upstream docker-registry {
+  # This line will be replaced by the integration.sh script.
+  server  172.17.0.2:5000;
+}
+
+server {
+  listen  443 ssl;
+  server_name registry.local;
+  ssl_certificate self-certificate.crt;
+  ssl_certificate_key self-private.key;
+
+  # disable any limits to avoid HTTP 413 for large image uploads
+  client_max_body_size 0;
+
+  proxy_set_header Host           $host;
+  proxy_set_header X-Real-IP      $remote_addr;
+  proxy_set_header Authorization  "";
+
+  location / {
+    proxy_pass  http://docker-registry;
+  }
+
+  location /v1 {
+    auth_basic "Private registry";
+    auth_basic_user_file /etc/nginx/registry.passwd;
+    proxy_pass  http://docker-registry;
+  }
+
+  location /v1/_ping {
+    proxy_pass  http://docker-registry;
+  }
+
+  location /v1/users {
+    proxy_pass  http://docker-registry;
+  }
+}
