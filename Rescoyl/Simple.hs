@@ -232,6 +232,8 @@ saveImageChecksum' static namespace image checksum = do
       e' <- liftIO $ doesFileExist $ dir </> "_inprogress"
       if e'
         then do
+          -- TODO Could it be that the file doesn't exist, e.g. if the layer wasn't already pushed ?
+          -- Testing that the directory exists is not enough; we should check the layer exists too.
           computed <- B.readFile path
           if computed == checksum
             then do
