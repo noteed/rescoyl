@@ -6,24 +6,18 @@ module Rescoyl.Simple where
 
 import Control.Applicative ((<$>))
 import Control.Exception (bracket_)
-import Control.Monad (liftM)
 import Crypto.PasswordStore (makePassword, verifyPassword)
 import Data.Aeson (decode, encode, object, (.=), Value)
-import Data.Binary.Get
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
-import qualified Data.Enumerator as E
 import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.Text as T
-import Data.Digest.Pure.SHA (completeSha256Incremental, sha256Incremental, showDigest)
 import Snap (liftIO)
 import Snap.Core
-  ( finishWith, getResponse, getTimeoutModifier
-  , modifyResponse, runRequestBody
-  , setResponseStatus, writeText
-  , MonadSnap(..))
+  ( finishWith, getResponse , modifyResponse
+  , setResponseStatus, writeText , MonadSnap(..))
 import Snap.Snaplet
 import Snap.Util.FileServe (serveFile)
 import System.Directory
@@ -31,10 +25,11 @@ import System.Directory
   , removeFile, doesFileExist
   )
 import System.FilePath ((</>))
-import System.IO (hClose, hFlush, hGetEcho, hSetEcho, openBinaryFile, stdin, stdout, IOMode(WriteMode))
+import System.IO (hFlush, hGetEcho, hSetEcho, stdin, stdout)
 import System.Posix (fileSize, getFileStatus)
 
 import Rescoyl.Types
+import Rescoyl.Utils (saveImageLayerToFile)
 
 -- TODO Instead of generating the 404s, or 50Xs here, return a data type
 -- representing the failure.
@@ -193,34 +188,14 @@ generateAncestry static namespace image mparent = do
 saveImageLayer' :: FilePath -> ByteString -> ByteString -> Handler App App ()
 saveImageLayer' static namespace image = do
   let dir = imagePath static namespace image
+      path = dir </> "layer"
   -- TODO how to bracket open/close with iterHandle in between ?
   liftIO $ createDirectoryIfMissing True dir
-  h <- liftIO $ openBinaryFile (dir </> "layer") WriteMode
+  -- TODO Ensure the json is already saved.
   json <- liftIO $ B.readFile (dir </> "json")
 
-  -- Note that we need the json string exactly as it was sent by the client.
-  -- It cannot be the result of parse/render unless it gives the exact same
-  -- result.
-  let decoder = pushChunk sha256Incremental $ json `B.append` "\n"
-      n = B.length json + 1
-  bump <- liftM ($ max 5) getTimeoutModifier
-  (checksum, _) <- runRequestBody $ iterHandle' decoder n bump h
-  liftIO $ do
-    B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
-    hClose h
-
---iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
-iterHandle' decoder n' bump h = E.continue $ step decoder n' where
-  step dec n E.EOF =
-    E.yield (B.pack . showDigest $ completeSha256Incremental dec n, n) E.EOF
-  step dec n (E.Chunks []) = E.continue $ step dec n
-  step dec n (E.Chunks bytes) = do
-    E.tryIO (mapM_ (B.hPut h) bytes)
-    _ <- E.tryIO bump
-    let bytes' = L.fromChunks bytes
-    E.continue $ step (pushChunks dec bytes') (n + fromIntegral (L.length bytes'))
-    -- TODO I wonder if the fromIntegral to use Int instead of Int64
-    -- means long input would get a wrong SHA256 sum.
+  (checksum, _) <- saveImageLayerToFile json path
+  liftIO $ B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
 
 saveImageChecksum' :: FilePath -> ByteString -> ByteString -> ByteString -> IO PutChecksum
 saveImageChecksum' static namespace image checksum = do
