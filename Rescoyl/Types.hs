@@ -83,12 +83,6 @@ data GetJson =
   | SizeAndJson Int Value
   | ErrorDecodingJson
 
-data PutChecksum =
-    ChecksumNoSuchImage
-  | ChecksumSaved
-  | ChecksumMismatch
-  | ChecksumAlreadySaved
-
 ----------------------------------------------------------------------
 -- JSON
 ----------------------------------------------------------------------
