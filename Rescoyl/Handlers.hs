@@ -29,6 +29,8 @@ import Snap.Core
   , Method(..))
 import Snap.Snaplet (Handler)
 import Snap.Snaplet.Session (withSession)
+import Snap.Util.FileServe (serveFile)
+import System.Directory (doesFileExist)
 
 import Rescoyl.Simple (notFound)
 import Rescoyl.Types
@@ -46,6 +48,7 @@ routes endpoints =
   , ("/v1/images/:image/ancestry", ifTop $ method GET getImageAncestry)
   , ("/v1/images/:image/json", ifTop $
     method GET getImageJson <|> method PUT putImageJson)
+  -- TODO Also handle HEAD requests for the layer.
   , ("/v1/images/:image/layer", ifTop $
     method GET getImageLayer <|> method PUT putImageLayer)
   , ("/v1/images/:image/checksum", ifTop $ method PUT putImageChecksum)
@@ -102,34 +105,63 @@ getImageAncestry = do
   namespace <- validateGetImage
   Just image <- getParam "image"
   reg <- gets _registry
-  mancestry <- liftIO $ imageAncestry reg namespace image
-  maybe notFound (\a -> do
-    modifyResponse $ setContentType "application/json"
-    writeLBS $ encode a) mancestry
+  mi <- liftIO $ loadImage reg namespace image
+  case mi of
+    ImageJson _ ancestry -> do
+      modifyResponse $ setContentType "application/json"
+      writeLBS $ encode ancestry
+    ImageLayer _ ancestry _ -> do
+      modifyResponse $ setContentType "application/json"
+      writeLBS $ encode ancestry
+    Image _ ancestry _ _ -> do
+      modifyResponse $ setContentType "application/json"
+      writeLBS $ encode ancestry
+    ImageErrorDecodingJson -> modifyResponse $
+      setResponseStatus 500 "Error decoding already saved JSON."
+    ImageDoesntExist -> notFound
 
 getImageJson :: Handler App App ()
 getImageJson = do
   namespace <- validateGetImage
   Just image <- getParam "image"
   reg <- gets _registry
-  msj <- liftIO $ imageJson reg namespace image
-  case msj of
-    NoSuchImage -> notFound
-    UploadInProgress -> modifyResponse $
+
+  mi <- liftIO $ loadImage reg namespace image
+  case mi of
+    ImageJson _ _ -> modifyResponse $
       setResponseStatus 400 "Image upload is in progress."
-    SizeAndJson size json -> do
+    ImageLayer _ _ _ -> modifyResponse $
+      setResponseStatus 400 "Image upload is in progress."
+    Image json _ (Layer _ size _) _ -> do
       modifyResponse $ setHeader "X-Docker-Size" $ B.pack $ show size
       modifyResponse $ setContentType "application/json"
       writeLBS $ encode json
-    ErrorDecodingJson -> modifyResponse $
+    ImageErrorDecodingJson -> modifyResponse $
       setResponseStatus 500 "Error decoding already saved JSON."
+    ImageDoesntExist -> notFound
 
 getImageLayer :: Handler App App ()
 getImageLayer = do
   namespace <- validateGetImage
   Just image <- getParam "image"
   reg <- gets _registry
-  imageLayer reg namespace image
+  mi <- liftIO $ loadImage reg namespace image
+  case mi of
+    ImageJson _ _ -> modifyResponse $
+      setResponseStatus 400 "Image upload is in progress."
+    ImageLayer _ _ _ -> modifyResponse $
+      setResponseStatus 400 "Image upload is in progress."
+    Image _ _ (Layer path _ _) _ -> serveFile' path
+    ImageErrorDecodingJson -> modifyResponse $
+      setResponseStatus 500 "Error decoding already saved JSON."
+    ImageDoesntExist -> notFound
+
+serveFile' :: FilePath -> Handler App App ()
+serveFile' path = do
+  e <- liftIO $ doesFileExist path
+  if e
+    then serveFile path
+    else modifyResponse $ setResponseStatus 404 "No Found"
 
 putImageJson :: Handler App App ()
 putImageJson = do
@@ -143,72 +175,94 @@ putImageJson = do
     Just desc | imageDescriptionId desc /= B.unpack image ->
       modifyResponse $ setResponseStatus 400 "Invalid image ID in JSON."
     Just desc -> do
-      msj <- liftIO $ imageJson reg namespace image
-      case msj of
-        NoSuchImage -> do
-          saveImageJson reg namespace image desc body
+      mi <- liftIO $ loadImage reg namespace image
+      case mi of
+        ImageJson _ _ -> do
+          liftIO $ saveImageJson reg namespace image desc body
           writeText "true"
-        UploadInProgress -> modifyResponse $
+        ImageLayer _ _ _ -> do
+          liftIO $ saveImageJson reg namespace image desc body
+          writeText "true"
+        Image _ _ _ _ -> modifyResponse $
           setResponseStatus 409 "Image already exists."
-        SizeAndJson _ _ -> modifyResponse $
-          setResponseStatus 409 "Image already exists."
-        ErrorDecodingJson -> modifyResponse $
+        ImageErrorDecodingJson -> modifyResponse $
           setResponseStatus 500 "Error decoding already saved JSON."
+        ImageDoesntExist -> do
+          liftIO $ saveImageJson reg namespace image desc body
+          writeText "true"
 
 putImageLayer :: Handler App App ()
 putImageLayer = do
   namespace <- validatePutImage
   Just image <- getParam "image"
   reg <- gets _registry
-  saveImageLayer reg namespace image
-  writeText "true"
+  mi <- liftIO $ loadImage reg namespace image
+  case mi of
+    ImageJson _ _ -> do
+      saveImageLayer reg namespace image
+      writeText "true"
+    ImageLayer _ _ _ -> do
+      saveImageLayer reg namespace image
+      writeText "true"
+    Image _ _ _ _ -> modifyResponse $
+      setResponseStatus 409 "Image already exists."
+    ImageErrorDecodingJson -> modifyResponse $
+      setResponseStatus 500 "Error decoding already saved JSON."
+    ImageDoesntExist -> do
+      modifyResponse $ setResponseStatus 404 "Image doesn't exist."
 
 putImageChecksum :: Handler App App ()
 putImageChecksum = do
   namespace <- validatePutImage
   Just image <- getParam "image"
   reg <- gets _registry
-  mchecksum <- getsRequest $ getHeader "X-Docker-Checksum-Payload"
-  case mchecksum of
-    Just checksum -> do
-      mclient <- getClientVersion
-      -- For older Docker clients. (TODO Should get rid of it.)
-      -- Don't compare uploaded checksum against computed one.
-      r <- case mclient of
-        Nothing -> liftIO $ saveImageChecksumOld reg namespace image checksum
-        Just client ->
-          if client < zero_ten
-          then liftIO $ saveImageChecksumOld reg namespace image checksum
-          else liftIO $ saveImageChecksum reg namespace image checksum
-      response r
 
-    Nothing -> do
-      -- For older Docker clients. TODO Should get rid of it.
-      -- Don't compare uploaded checksum against computed one.
-      mchecksum' <- getsRequest $ getHeader "X-Docker-Checksum"
-      case mchecksum' of
-        Just checksum -> do
-          r <- liftIO $ saveImageChecksumOld reg namespace image checksum
-          response r
-        Nothing -> do
-          modifyResponse $ setResponseStatus 400 "Error reading checksum."
-          modifyResponse $ setContentType "application/json"
-          writeText "{\"error\":\"Error reading checksum\"}"
+  mi <- liftIO $ loadImage reg namespace image
+  case mi of
+    ImageJson _ _ -> do
+      modifyResponse $ setResponseStatus 404 "Image doesn't exist."
+    ImageLayer _ _ (Layer _ _ computed) -> do
+      go computed reg namespace image
+    Image _ _ _ _ -> do
+      modifyResponse $ setResponseStatus 409 "Checksum already saved."
+      modifyResponse $ setContentType "application/json"
+      writeText "{\"error\":\"Checksum already saved\"}"
+    ImageErrorDecodingJson -> modifyResponse $
+      setResponseStatus 500 "Error decoding already saved JSON."
+    ImageDoesntExist -> notFound
 
-    where
-    response r = case r of
-      ChecksumNoSuchImage -> modifyResponse $
-        setResponseStatus 404 "Not Found"
-      ChecksumSaved -> return ()
-        -- TODO I guess it should return "true".
-      ChecksumMismatch -> do
-        modifyResponse $ setResponseStatus 400 "Checksum mismatch."
-        modifyResponse $ setContentType "application/json"
-        writeText "{\"error\":\"Checksum mismatch\"}"
-      ChecksumAlreadySaved -> do
-        modifyResponse $ setResponseStatus 409 "Checksum already saved."
-        modifyResponse $ setContentType "application/json"
-        writeText "{\"error\":\"Checksum already saved\"}"
+  where
+  go computed reg namespace image = do
+    mchecksum <- getsRequest $ getHeader "X-Docker-Checksum-Payload"
+    case mchecksum of
+      Just checksum -> do
+        mclient <- getClientVersion
+        -- For older Docker clients. (TODO Should get rid of it.)
+        -- Don't compare uploaded checksum against computed one.
+        case mclient of
+          Nothing -> liftIO $ saveImageChecksumOld reg namespace image checksum
+          Just client ->
+            if client < zero_ten
+            then liftIO $ saveImageChecksumOld reg namespace image checksum
+            else
+              if checksum == computed
+              then liftIO $ saveImageChecksum reg namespace image checksum
+              else do
+                modifyResponse $ setResponseStatus 400 "Checksum mismatch."
+                modifyResponse $ setContentType "application/json"
+                writeText "{\"error\":\"Checksum mismatch\"}"
+
+      Nothing -> do
+        -- For older Docker clients. TODO Should get rid of it.
+        -- Don't compare uploaded checksum against computed one.
+        mchecksum' <- getsRequest $ getHeader "X-Docker-Checksum"
+        case mchecksum' of
+          Just checksum -> do
+            liftIO $ saveImageChecksumOld reg namespace image checksum
+          Nothing -> do
+            modifyResponse $ setResponseStatus 400 "Error reading checksum."
+            modifyResponse $ setContentType "application/json"
+            writeText "{\"error\":\"Error reading checksum\"}"
 
 -- | Creates the image index STATIC/v1/repositories/:namespace/:repo/images
 putRepository :: [String] -> Handler App App ()

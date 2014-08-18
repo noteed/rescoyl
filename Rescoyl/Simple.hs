@@ -17,12 +17,11 @@ import qualified Data.Text as T
 import Snap (liftIO)
 import Snap.Core
   ( finishWith, getResponse , modifyResponse
-  , setResponseStatus, writeText , MonadSnap(..))
+  , setResponseStatus, writeText)
 import Snap.Snaplet
-import Snap.Util.FileServe (serveFile)
 import System.Directory
   ( createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents
-  , removeFile, doesFileExist
+  , doesFileExist
   )
 import System.FilePath ((</>))
 import System.IO (hFlush, hGetEcho, hSetEcho, stdin, stdout)
@@ -101,9 +100,7 @@ isAuthorized' us (Just (login, password)) =
 initRegistryBackend :: FilePath -> IO RegistryBackend
 initRegistryBackend static = do
   return RegistryBackend
-    { imageAncestry = imageAncestry' static
-    , imageJson = imageJson' static
-    , imageLayer = imageLayer' static
+    { loadImage = loadImage' static
     , saveImageJson = saveImageJson' static
     , saveImageLayer = saveImageLayer' static
     , saveImageChecksum = saveImageChecksum' static
@@ -115,126 +112,85 @@ initRegistryBackend static = do
     , saveImageIndex = saveImageIndex' static
     }
 
-imageAncestry' :: FilePath -> ByteString -> ByteString -> IO (Maybe Value)
-imageAncestry' static namespace image = do
-  let dir = imagePath static namespace image
-      path = dir </> "ancestry"
-
-  e <- liftIO $ doesFileExist path
-  if e
-    then decode <$> L.readFile path
-    else return Nothing
-
-imageJson' :: FilePath -> ByteString -> ByteString -> IO GetJson
-imageJson' static namespace image = do
+loadImage' :: FilePath -> ByteString -> ByteString -> IO GetImage
+loadImage' static namespace image = do
   let dir = imagePath static namespace image
       path = dir </> "json"
       path' = dir </> "layer"
+      path'' = dir </> "checksum"
+      path''' = dir </> "client_checksum"
 
-  e <- liftIO $ doesFileExist $ dir </> "_inprogress"
-  if e
-    then return UploadInProgress
-    else do
-      e' <- doesFileExist path
-      e'' <- doesFileExist path'
-      if e' && e''
-        then do
-          size <- getFileStatus path' >>= return . fileSize
-          mjson <- decode <$> L.readFile path
-          case mjson of
-            Nothing -> return ErrorDecodingJson
-            Just json -> return $ SizeAndJson (fromIntegral size) json
-        else return NoSuchImage
-
-imageLayer' :: FilePath -> ByteString -> ByteString -> Handler App App ()
-imageLayer' static namespace image = do
-  let dir = imagePath static namespace image
-  e <- liftIO $ doesFileExist $ dir </> "_inprogress"
-  if e
-    then modifyResponse $
-      setResponseStatus 400 "Image upload is in progress."
-    else serveImageFile static namespace image "layer"
+  e <- doesFileExist path
+  a <- doesFileExist $ dir </> "ancestry"
+  if e && a
+    then do
+      mjson <- decode <$> L.readFile path
+      mjson' <- decode <$> L.readFile (dir </> "ancestry")
+      case (mjson, mjson') of
+        (Nothing, _) -> return ImageErrorDecodingJson
+        (_, Nothing) -> return ImageErrorDecodingJson
+        (Just json, Just ancestry) -> do
+          e' <- doesFileExist path'
+          e'' <- doesFileExist path''
+          if e' && e''
+            then do
+              size <- getFileStatus path' >>= return . fileSize
+              checksum <- B.readFile path''
+              e''' <- doesFileExist path'''
+              if e'''
+                then do
+                  clientChecksum <- B.readFile path'''
+                  return $ Image json ancestry
+                    (Layer path' (fromIntegral size) checksum) clientChecksum
+                else
+                  return $ ImageLayer json ancestry
+                    (Layer path' (fromIntegral size) checksum)
+            else return $ ImageJson json ancestry
+    else return ImageDoesntExist
 
 -- TODO `desc` is actually `decode content`. This means that normally
 -- `content` is redundant. But right now, `decode content` is lossy
 -- and we really want to store the whole `content`.
 saveImageJson' :: FilePath -> ByteString -> ByteString
-  -> ImageDescription -> L.ByteString -> Handler App App ()
+  -> ImageDescription -> L.ByteString -> IO ()
 saveImageJson' static namespace image desc content = do
   let dir = imagePath static namespace image
-  liftIO $ do
-    createDirectoryIfMissing True dir
-    L.writeFile (dir </> "json") content
-    B.writeFile (dir </> "_inprogress") "true"
+  createDirectoryIfMissing True dir
+  L.writeFile (dir </> "json") content
   generateAncestry static namespace image $ imageDescriptionParent desc
 
--- | This can fail with a HTTP 500.
-generateAncestry :: MonadSnap m => String -> ByteString -> ByteString -> Maybe String -> m ()
+generateAncestry :: String -> ByteString -> ByteString -> Maybe String -> IO ()
 generateAncestry static namespace image mparent = do
   parents <- case mparent of
     Nothing -> return []
     Just parent -> do
       let dir' = imagePath static namespace $ B.pack parent
-      mparents <- decode <$> liftIO (L.readFile $ dir' </> "ancestry")
+      mparents <- decode <$> (L.readFile $ dir' </> "ancestry")
       case mparents of
-        Nothing -> do
-          modifyResponse $ setResponseStatus 500 "Error decoding parent ancestry."
-          r <- getResponse
-          finishWith r
+        Nothing -> error "Corrupted parent ancestry file."
         Just parents -> return parents
   let dir = imagePath static namespace image
-  liftIO $ L.writeFile (dir </> "ancestry") $ encode $ image : parents
+  L.writeFile (dir </> "ancestry") $ encode $ image : parents
 
 saveImageLayer' :: FilePath -> ByteString -> ByteString -> Handler App App ()
 saveImageLayer' static namespace image = do
   let dir = imagePath static namespace image
-      path = dir </> "layer"
   -- TODO how to bracket open/close with iterHandle in between ?
-  liftIO $ createDirectoryIfMissing True dir
   -- TODO Ensure the json is already saved.
   json <- liftIO $ B.readFile (dir </> "json")
-
-  (checksum, _) <- saveImageLayerToFile json path
+  (checksum, _) <- saveImageLayerToFile json (dir </> "layer")
   liftIO $ B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
 
-saveImageChecksum' :: FilePath -> ByteString -> ByteString -> ByteString -> IO PutChecksum
+saveImageChecksum' :: FilePath -> ByteString -> ByteString -> ByteString -> IO ()
 saveImageChecksum' static namespace image checksum = do
   let dir = imagePath static namespace image
-      path = dir </> "checksum"
-  e <- doesDirectoryExist dir
-  if e
-    then do
-      e' <- liftIO $ doesFileExist $ dir </> "_inprogress"
-      if e'
-        then do
-          -- TODO Could it be that the file doesn't exist, e.g. if the layer wasn't already pushed ?
-          -- Testing that the directory exists is not enough; we should check the layer exists too.
-          computed <- B.readFile path
-          if computed == checksum
-            then do
-              removeFile $ dir </> "_inprogress"
-              return ChecksumSaved
-            else return ChecksumMismatch
-        else return ChecksumAlreadySaved
-    else return ChecksumNoSuchImage
+  B.writeFile (dir </> "client_checksum") checksum
 
--- | We didn't compute the checksum when the layer was uploaded so we never
--- return `ChecksumMismatch`.
-saveImageChecksumOld' :: FilePath -> ByteString -> ByteString -> ByteString -> IO PutChecksum
+saveImageChecksumOld' :: FilePath -> ByteString -> ByteString -> ByteString -> IO ()
 saveImageChecksumOld' static namespace image checksum = do
   let dir = imagePath static namespace image
-      path = dir </> "checksum"
-  e <- doesDirectoryExist dir
-  if e
-    then do
-      e' <- liftIO $ doesFileExist $ dir </> "_inprogress"
-      if e'
-        then do
-          B.writeFile path checksum
-          removeFile $ dir </> "_inprogress"
-          return ChecksumSaved
-        else return ChecksumAlreadySaved
-    else return ChecksumNoSuchImage
+  B.writeFile (dir </> "checksum") checksum
+  B.writeFile (dir </> "client_checksum") checksum
 
 saveRepository' :: FilePath -> ByteString -> ByteString -> [ImageInfo] -> IO ()
 saveRepository' static namespace repo images = do
@@ -286,15 +242,3 @@ saveImageIndex' static namespace repo new = do
     Just original -> do
       liftIO $ L.writeFile path $ encode $ combineImageInfo original new
       modifyResponse $ setResponseStatus 204 "No Content"
-
-serveImageFile :: FilePath -> ByteString -> ByteString -> FilePath -> Handler App App ()
-serveImageFile static namespace image file = do
-  let dir = imagePath static namespace image
-  serveFile' $ dir </> file
-
-serveFile' :: FilePath -> Handler App App ()
-serveFile' path = do
-  e <- liftIO $ doesFileExist path
-  if e
-    then serveFile path
-    else modifyResponse $ setResponseStatus 404 "No Found"

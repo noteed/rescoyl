@@ -31,15 +31,23 @@ data UserBackend = UserBackend
 -- TODO The Handler App App () types must be replaced by non-HTTP-related code.
 -- This is currently required to e.g. serve an image layer. This can be changed
 -- when Snap is written using the `io-streams` library.
+--
+-- Given a unique (namespace, image ID) pair, it is guaranteed by the protocol
+-- handlers to call `saveImageJson`, `saveImageLayer`, and `saveImageChecksum`
+-- in that order (when the previous function has been succesfull). The success
+-- of these functions must be visible in the result of `loadImage`.
+-- Calls to saveImageJson can be repeated.
+--
+-- TODO To be really correct, a backend should provide a withTransaction
+-- function, allowing to chain `loadImage` and, say, `saveImageLayer`
+-- atomically.
 data RegistryBackend = RegistryBackend
-  { imageAncestry :: ByteString -> ByteString -> IO (Maybe Value)
-  , imageJson :: ByteString -> ByteString -> IO GetJson
-  , imageLayer :: ByteString -> ByteString -> Handler App App ()
+  { loadImage :: ByteString -> ByteString -> IO GetImage
   , saveImageJson :: ByteString -> ByteString
-      -> ImageDescription -> L.ByteString -> Handler App App ()
+      -> ImageDescription -> L.ByteString -> IO ()
   , saveImageLayer :: ByteString -> ByteString -> Handler App App ()
-  , saveImageChecksum :: ByteString -> ByteString -> ByteString -> IO PutChecksum
-  , saveImageChecksumOld :: ByteString -> ByteString -> ByteString -> IO PutChecksum
+  , saveImageChecksum :: ByteString -> ByteString -> ByteString -> IO ()
+  , saveImageChecksumOld :: ByteString -> ByteString -> ByteString -> IO ()
   -- ^ For older checksum header.
   , saveRepository :: ByteString -> ByteString -> [ImageInfo] -> IO ()
   , readTags :: ByteString -> ByteString -> IO Value
@@ -47,6 +55,27 @@ data RegistryBackend = RegistryBackend
   , readImageIndex :: ByteString -> ByteString -> IO (Maybe [ImageInfo])
   , saveImageIndex :: ByteString -> ByteString -> [ImageInfo] -> Handler App App ()
   }
+
+-- | The minimal data that a server has about an image is its JSON meta-data.
+-- Without that meta-data, the image doesn't exist.
+data GetImage =
+    ImageJson Value Value
+    -- ^ JSON meta-data, and ancestry data.
+  | ImageLayer Value Value Layer
+    -- ^ Same as ImageJson, but adds a layer.
+  | Image Value Value Layer ByteString
+    -- ^ Same as ImageLayer, but adds a client-provided checksum.
+  | ImageErrorDecodingJson
+  | ImageDoesntExist
+
+data Layer = Layer FilePath Int ByteString
+  -- ^ Currently the layer is assumed to be on disk. A variant type
+  -- `FilePath | InputStream ByteString` will be used in the future.
+  -- In addition to the path on disk, the layer size and its checksum are
+  -- given. A layer value shouldn't be constructed if the data is not fully
+  -- available on disk (e.g. if the layer is currently being uploaded; since
+  -- the size and checksum are required, it is difficult to not obey that
+  -- rule).
 
 data GetJson =
     NoSuchImage

@@ -29,5 +29,9 @@ else
   mv mitm-output.txt mitm-rescoyl.txt
 fi
 
+sleep 5
+sudo docker cp $REGISTRY_ID:/log .
+sudo docker cp $REGISTRY_ID:/store .
+
 docker kill $REGISTRY_ID
 docker rm $REGISTRY_ID

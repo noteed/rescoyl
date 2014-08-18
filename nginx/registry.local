@@ -1,6 +1,6 @@
 upstream docker-registry {
   # This line will be replaced by the integration.sh script.
-  server  172.17.0.2:5000;
+  server  172.17.0.10:5000;
 }
 
 server {

@@ -94,7 +94,7 @@ docker run --privileged --dns $DNS_IP -t -i \
   noteed/dind:1.1.2 wrapdocker /source/test.sh
 
 # Some cleanup.
-docker kill $DNS $RESCOYL_ID $NGINX_ID $MITM_ID
-docker rm $DNS $RESCOYL_ID $NGINX_ID $MITM_ID
+docker kill $DNS $NGINX_ID $MITM_ID
+docker rm $DNS $NGINX_ID $MITM_ID
 rm -f self-certificate.crt self-key-and-certificate.pem self-private.key
 rm -f nginx/registry.passwd

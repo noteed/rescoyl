@@ -17,7 +17,9 @@ import Snap.Core
   , runRequestBody
   , MonadSnap(..))
 import Snap.Snaplet (Handler)
-import System.IO (hClose, openBinaryFile, IOMode(WriteMode))
+import System.Directory (renameFile)
+import System.IO (hClose)
+import System.IO.Temp (openTempFile)
 import Text.ParserCombinators.ReadP (readP_to_S)
 
 import Rescoyl.Types
@@ -62,9 +64,11 @@ saveImageLayerToFile json path = do
   let decoder = pushChunk sha256Incremental $ json `B.append` "\n"
       n = B.length json + 1
   bump <- liftM ($ max 5) getTimeoutModifier
-  h <- liftIO $ openBinaryFile path WriteMode
+  (fn, h) <- liftIO $ openTempFile "/tmp" "temorary.layer"
   r <- runRequestBody $ iterHandle' decoder n bump h
-  liftIO $ hClose h
+  liftIO $ do
+    hClose h
+    renameFile fn path
   return r
 
 --iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
