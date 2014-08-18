@@ -1,7 +1,9 @@
-# Rescoyl - a private Docker registry.
+# The Rescoyl Docker registry
 
-Rescoyl is a small re-implementation of the
-[docker-registry](https://github.com/docker/docker-registry).
+Rescoyl is a Docker registry. It is tested against the official
+[docker-registry](https://github.com/docker/docker-registry) project using
+[Rescoyl Checks](https://github.com/noteed/rescoyl-checks). It is currently in
+developement.
 
 ## Building the image
 
