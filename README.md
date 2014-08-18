@@ -3,7 +3,7 @@
 Rescoyl is a Docker registry. It is tested against the official
 [docker-registry](https://github.com/docker/docker-registry) project using
 [Rescoyl Checks](https://github.com/noteed/rescoyl-checks). It is currently in
-developement.
+development.
 
 ## Building the image
 
