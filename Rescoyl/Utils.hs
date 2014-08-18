@@ -18,6 +18,7 @@ import Snap.Core
   , MonadSnap(..))
 import Snap.Snaplet (Handler)
 import System.Directory (renameFile)
+import System.FilePath ((<.>))
 import System.IO (hClose)
 import System.IO.Temp (openTempFile)
 import Text.ParserCombinators.ReadP (readP_to_S)
@@ -64,7 +65,10 @@ saveImageLayerToFile json path = do
   let decoder = pushChunk sha256Incremental $ json `B.append` "\n"
       n = B.length json + 1
   bump <- liftM ($ max 5) getTimeoutModifier
-  (fn, h) <- liftIO $ openTempFile "/tmp" "temorary.layer"
+  -- The temporary file must be located at the same place than the final file.
+  -- This is necessary because the `renameFile` operation won't work if the
+  -- data store is a Docker bind-mount and the temporary location isn't.
+  (fn, h) <- liftIO $ openTempFile "/" $ path <.> "temp"
   r <- runRequestBody $ iterHandle' decoder n bump h
   liftIO $ do
     hClose h
