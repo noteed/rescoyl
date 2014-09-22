@@ -70,12 +70,12 @@ saveImageLayerToFile json path = do
   -- This is necessary because the `renameFile` operation won't work if the
   -- data store is a Docker bind-mount and the temporary location isn't.
   (fn, h) <- liftIO $ openTempFile "/" $ path <.> "temp"
-  r <- runRequestBody $ iterHandle' decoder n bump h
+  (digest, size) <- runRequestBody $ iterHandle' decoder n bump h
   liftIO $ do
     hFlush h
     hClose h
     renameFile fn path
-  return r
+  return (digest, size - n)
 
 --iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
 iterHandle' decoder n' bump h = E.continue $ step decoder n' where
