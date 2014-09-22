@@ -20,6 +20,7 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
 import Data.List (intersperse)
 import qualified Data.Text as T
+import Data.Version (showVersion)
 import Snap (gets, liftIO)
 import Snap.Core
   ( emptyResponse, finishWith, getHeader, getParam, getResponse, getsRequest
@@ -31,6 +32,8 @@ import Snap.Snaplet (Handler)
 import Snap.Snaplet.Session (withSession)
 import Snap.Util.FileServe (serveFile)
 import System.Directory (doesFileExist)
+
+import Paths_rescoyl (version)
 
 import Rescoyl.Simple (notFound)
 import Rescoyl.Types
@@ -82,18 +85,18 @@ catch500 :: Handler App App a -> Handler App App ()
 catch500 m = (m >> return ()) `catch` \(e::SomeException) -> do
   putResponse $ setContentType "text/html" $
     setResponseStatus 500 "Internal Server Error" emptyResponse
-  writeText "The Rescoyl Docker registry exploded."
+  writeText "The Rescoyl Docker registry exploded. Exception:\n\n"
   writeText $ T.pack $ show e
 
   logError $ B.concat [ "caught exception: ", B.pack $ show e ]
 
 indexPage :: Handler App App ()
 indexPage = do
-  writeText "The Rescoyl Docker registry."
+  writeText . T.pack $ "The Rescoyl Docker registry " ++ showVersion version ++ "."
 
 v1Page :: Handler App App ()
 v1Page = do
-  writeText "The Rescoyl Docker registry."
+  writeText . T.pack $ "The Rescoyl Docker registry " ++ showVersion version ++ "."
 
 ping :: Handler App App ()
 ping = withSession sess $ do
