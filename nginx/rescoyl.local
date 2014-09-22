@@ -4,8 +4,10 @@ upstream docker-registry {
 }
 
 server {
-  listen  443 ssl;
+  listen  443;
   server_name registry.local;
+
+  ssl on;
   ssl_certificate self-certificate.crt;
   ssl_certificate_key self-private.key;
 
@@ -14,6 +16,9 @@ server {
 
   proxy_set_header Host           $host;
   proxy_set_header X-Real-IP      $remote_addr;
+
+  # avoid HTTP 411
+  chunked_transfer_encoding on;
 
   location / {
     proxy_pass  http://docker-registry;
