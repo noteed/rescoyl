@@ -41,4 +41,4 @@ docker rmi registry.local/quux/bar
 docker rmi registry.local/quux/bar:beta
 
 cd /source
-./http-checks docker-all
+./rescoyl-checks docker-all

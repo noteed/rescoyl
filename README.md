@@ -50,6 +50,8 @@ file system, for instance:
 
 ## Testing
 
+### Prepare a dind-rescoyl (container) volume
+
 The tests run in their own container and they will download an ubuntu:12.04
 image. To avoid re-downloading that image repeatedly, you can do it once and
 keep around the resulting volume. The test script will use the volume from a
@@ -63,9 +65,17 @@ container named `dind-rescoyl`.
 After you can check that running a container with `--volumes-from dind-rescoyl`
 will have the ubuntu:12.04 image already present.
 
+### `rescoyl-checks`
+
+The tests require a copy of the `rescoyl-checks` executable in the current
+directory.
+
+### Run the tests
+
 The tests are run as follow:
 
-    > ./integration rescoyl
+    > ./integration rescoyl # to run against Rescoyl
 
-Note that you need a copy of the `http-checks` executable in the current
-directory.
+or
+
+    > ./integration registry # to run against the official registry
