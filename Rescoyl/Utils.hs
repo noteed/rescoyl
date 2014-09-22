@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Rescoyl.Utils where
 
@@ -19,7 +20,7 @@ import Snap.Core
 import Snap.Snaplet (Handler)
 import System.Directory (renameFile)
 import System.FilePath ((<.>))
-import System.IO (hClose)
+import System.IO (hClose, hFlush)
 import System.IO.Temp (openTempFile)
 import Text.ParserCombinators.ReadP (readP_to_S)
 
@@ -64,23 +65,24 @@ saveImageLayerToFile json path = do
   -- result.
   let decoder = pushChunk sha256Incremental $ json `B.append` "\n"
       n = B.length json + 1
-  bump <- liftM ($ max 5) getTimeoutModifier
+  bump <- liftM ($ max 15) getTimeoutModifier
   -- The temporary file must be located at the same place than the final file.
   -- This is necessary because the `renameFile` operation won't work if the
   -- data store is a Docker bind-mount and the temporary location isn't.
   (fn, h) <- liftIO $ openTempFile "/" $ path <.> "temp"
   r <- runRequestBody $ iterHandle' decoder n bump h
   liftIO $ do
+    hFlush h
     hClose h
     renameFile fn path
   return r
 
 --iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
 iterHandle' decoder n' bump h = E.continue $ step decoder n' where
-  step dec n E.EOF =
+  step !dec !n E.EOF =
     E.yield (BC.pack . showDigest $ completeSha256Incremental dec n, n) E.EOF
-  step dec n (E.Chunks []) = E.continue $ step dec n
-  step dec n (E.Chunks bytes) = do
+  step !dec !n (E.Chunks []) = E.continue $ step dec n
+  step !dec !n (E.Chunks bytes) = do
     E.tryIO (mapM_ (B.hPut h) bytes)
     _ <- E.tryIO bump
     let bytes' = L.fromChunks bytes
