@@ -49,15 +49,15 @@ NGINX_IP=$(docker inspect $NGINX_ID | grep IPAddress | awk '{ print $2 }' | tr -
 
 # Run mitmproxy. mitmproxy traces can be inspected with:
 #
-#   > docker run -e LANG=en_US.UTF-8 -v `pwd`:/source -t -i mitmproxy \
+#   > docker run -e LANG=en_US.UTF-8 -v `pwd`:/source -t -i noteed/mitmproxy \
 #     mitmproxy -r /source/mitm-output.txt
 rm -f mitm-output.txt
 touch mitm-output.txt
 MITM_ID=$(docker run -d \
   -v `pwd`/mitm-output.txt:/mitm-output.txt \
   -v `pwd`/self-key-and-certificate.pem:/self-key-and-certificate.pem \
-  mitmproxy \
-    mitmdump -q -P https://$NGINX_IP -p 443 -w /mitm-output.txt \
+  noteed/mitmproxy \
+    mitmdump -q -R https://$NGINX_IP -p 443 -w /mitm-output.txt \
     --cert /self-key-and-certificate.pem
   )
 REGISTRY_IP=$(docker inspect $MITM_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
@@ -71,7 +71,7 @@ DNS=$(
   --privileged \
   -d -p 53 \
   -v `pwd`/dnsmasq.d:/etc/dnsmasq.d/ \
-  dnsmasq)
+  images.reesd.com/reesd/dnsmasq)
 DNS_IP=$(docker inspect $DNS | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
 
 sleep 5
@@ -90,8 +90,9 @@ echo
 # layers.
 docker run --privileged --dns $DNS_IP -t -i \
   -v `pwd`:/source \
-  --volumes-from dind-rescoyl \
-  noteed/dind:1.1.2 wrapdocker /source/test.sh
+  noteed/dind wrapdocker /source/test.sh
+
+#  --volumes-from dind-rescoyl
 
 # Some cleanup.
 docker kill $DNS $NGINX_ID $MITM_ID
