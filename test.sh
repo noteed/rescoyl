@@ -26,6 +26,7 @@ docker tag registry.local/quux/bar registry.local/quux/bar:beta
 echo -n '{"registry.local":{"auth":"' > /.dockercfg
 echo -n 'quux:thud' | openssl enc -base64 -A >> /.dockercfg
 echo '","email":"quux@example.com"}}' >> /.dockercfg
+cp /.dockercfg /root/.dockercfg
 
 docker push registry.local/quux/bar
 docker rmi registry.local/quux/bar
