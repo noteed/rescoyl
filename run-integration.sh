@@ -85,12 +85,13 @@ echo
 
 # Run our test script within its own container. This is a docker-in-docker
 # container. (A slight variant of https://github.com/jpetazzo/dind with
-# specific versions of docker.)
+# specific versions of docker, available at https://github.com/noteed/dind.)
 # The --volume-from is there to reuse already `docker pull`ed ubuntu:12.04
 # layers.
 docker run --privileged --dns $DNS_IP -t -i \
   -v `pwd`:/source \
-  noteed/dind wrapdocker /source/test.sh
+  noteed/dind:1.1.2 \
+  wrapdocker /source/test.sh
 
 #  --volumes-from dind-rescoyl
 
