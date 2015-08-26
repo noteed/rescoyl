@@ -6,12 +6,12 @@ module Main (main) where
 import Control.Exception (SomeException)
 import Control.Monad (when)
 import Control.Monad.CatchIO (try)
+import Control.Monad.Trans (liftIO)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.Map as M
 import qualified Data.Text as T
 import Data.Version (showVersion)
 import Paths_rescoyl (version)
-import Snap (liftIO)
 import Snap.Http.Server
 import Snap.Snaplet
 import Snap.Snaplet.Session.Backends.CookieSession

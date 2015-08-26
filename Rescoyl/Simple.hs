@@ -6,6 +6,7 @@ module Rescoyl.Simple where
 
 import Control.Applicative ((<$>))
 import Control.Exception (bracket_)
+import Control.Monad.Trans (liftIO)
 import Crypto.PasswordStore (makePassword, verifyPassword)
 import Data.Aeson (decode, encode, object, (.=), Value)
 import Data.ByteString (ByteString)
@@ -13,8 +14,10 @@ import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Text (Text)
 import qualified Data.Text as T
-import Snap (liftIO)
+import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
 import Snap.Core
   ( finishWith, getResponse , modifyResponse
   , setResponseStatus, writeText)
@@ -37,9 +40,9 @@ repositoryPath :: FilePath -> B.ByteString -> B.ByteString -> FilePath
 repositoryPath static namespace repo =
   static </> "v1" </> B.unpack namespace </> "repositories" </> B.unpack repo
 
-imagePath :: FilePath -> B.ByteString -> B.ByteString -> FilePath
+imagePath :: FilePath -> Text -> Text -> FilePath
 imagePath static namespace image =
-  static </> "v1" </> B.unpack namespace </>"images" </> B.unpack image
+  static </> "v1" </> T.unpack namespace </> "images" </> T.unpack image
 
 notFound :: Handler App App ()
 notFound = do
@@ -49,7 +52,7 @@ notFound = do
   finishWith r
 
 -- | Mapping login / hashed password.
-type Users = Map ByteString ByteString
+type Users = Map Text Text
 
 initUserBackend :: FilePath -> IO UserBackend
 initUserBackend static = do
@@ -73,7 +76,7 @@ writeUsers static us = do
   let path = static </> "users"
   L.writeFile path $ encode us
 
-makeUser :: IO (ByteString, ByteString)
+makeUser :: IO (Text, Text)
 makeUser = do
   putStr "Login: " >> hFlush stdout
   login <- getLine
@@ -81,7 +84,7 @@ makeUser = do
   pw <- withEcho False getLine
   putChar '\n'
   pw' <- makePassword (B.pack pw) 16
-  return (B.pack login, pw')
+  return (T.pack login, T.decodeUtf8 pw')
 
 withEcho :: Bool -> IO a -> IO a
 withEcho echo action = do
@@ -89,11 +92,11 @@ withEcho echo action = do
   bracket_ (hSetEcho stdin echo) (hSetEcho stdin old) action
 
 -- | Check a login and password for authorization.
-isAuthorized' :: Users -> Maybe (ByteString, ByteString) -> IO (Maybe ByteString)
+isAuthorized' :: Users -> Maybe (Text, Text) -> IO (Maybe Text)
 isAuthorized' _ Nothing = return Nothing
 isAuthorized' us (Just (login, password)) =
   case M.lookup login us of
-    Just hashedPassword | verifyPassword password hashedPassword ->
+    Just hashedPassword | verifyPassword (T.encodeUtf8 password) (T.encodeUtf8 hashedPassword) ->
       return $ Just login
     _ -> return Nothing
 
@@ -112,7 +115,7 @@ initRegistryBackend static = do
     , saveImageIndex = saveImageIndex' static
     }
 
-loadImage' :: FilePath -> ByteString -> ByteString -> IO GetImage
+loadImage' :: FilePath -> Text -> Text -> IO GetImage
 loadImage' static namespace image = do
   let dir = imagePath static namespace image
       path = dir </> "json"
@@ -151,7 +154,7 @@ loadImage' static namespace image = do
 -- TODO `desc` is actually `decode content`. This means that normally
 -- `content` is redundant. But right now, `decode content` is lossy
 -- and we really want to store the whole `content`.
-saveImageJson' :: FilePath -> ByteString -> ByteString
+saveImageJson' :: FilePath -> Text -> Text
   -> ImageDescription -> L.ByteString -> IO ()
 saveImageJson' static namespace image desc content = do
   let dir = imagePath static namespace image
@@ -159,12 +162,12 @@ saveImageJson' static namespace image desc content = do
   L.writeFile (dir </> "json") content
   generateAncestry static namespace image $ imageDescriptionParent desc
 
-generateAncestry :: String -> ByteString -> ByteString -> Maybe String -> IO ()
+generateAncestry :: String -> Text -> Text -> Maybe String -> IO ()
 generateAncestry static namespace image mparent = do
   parents <- case mparent of
     Nothing -> return []
     Just parent -> do
-      let dir' = imagePath static namespace $ B.pack parent
+      let dir' = imagePath static namespace $ T.pack parent
       mparents <- decode <$> (L.readFile $ dir' </> "ancestry")
       case mparents of
         Nothing -> error "Corrupted parent ancestry file."
@@ -172,7 +175,7 @@ generateAncestry static namespace image mparent = do
   let dir = imagePath static namespace image
   L.writeFile (dir </> "ancestry") $ encode $ image : parents
 
-saveImageLayer' :: FilePath -> ByteString -> ByteString -> Handler App App ()
+saveImageLayer' :: FilePath -> Text -> Text -> Handler App App ()
 saveImageLayer' static namespace image = do
   let dir = imagePath static namespace image
   -- TODO how to bracket open/close with iterHandle in between ?
@@ -181,12 +184,12 @@ saveImageLayer' static namespace image = do
   (checksum, _) <- saveImageLayerToFile json (dir </> "layer")
   liftIO $ B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
 
-saveImageChecksum' :: FilePath -> ByteString -> ByteString -> ByteString -> IO ()
+saveImageChecksum' :: FilePath -> Text -> Text -> ByteString -> IO ()
 saveImageChecksum' static namespace image checksum = do
   let dir = imagePath static namespace image
   B.writeFile (dir </> "client_checksum") checksum
 
-saveImageChecksumOld' :: FilePath -> ByteString -> ByteString -> ByteString -> IO ()
+saveImageChecksumOld' :: FilePath -> Text -> Text -> ByteString -> IO ()
 saveImageChecksumOld' static namespace image checksum = do
   let dir = imagePath static namespace image
   B.writeFile (dir </> "checksum") checksum
@@ -208,7 +211,7 @@ readTags' static namespace repo = do
       then getDirectoryContents $ dir </> "tags"
       else return []
   let names' = filter (not . (`elem` [".", ".."])) names
-  tags <- mapM (L.readFile . (\n -> dir </> "tags" </> n)) names'
+  tags <- mapM (T.readFile . (\n -> dir </> "tags" </> n)) names'
   return $ object $ zipWith (\a b -> T.pack a .= b) names' tags
 
 saveTag' :: FilePath -> ByteString -> ByteString

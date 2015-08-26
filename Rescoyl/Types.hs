@@ -14,6 +14,7 @@ import Data.List (foldl')
 import qualified Data.Map as M
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as L
+import Data.Text (Text)
 import Snap.Snaplet (Handler, Snaplet)
 import Snap.Snaplet.Session (SessionManager)
 
@@ -23,7 +24,7 @@ import Snap.Snaplet.Session (SessionManager)
 
 -- | This interface is used for authentication.
 data UserBackend = UserBackend
-  { isAuthorized :: Maybe (ByteString, ByteString) -> IO (Maybe ByteString)
+  { isAuthorized :: Maybe (Text, Text) -> IO (Maybe Text)
   -- ^ Given a username and password, this returns the user's namespace.
   }
 
@@ -42,12 +43,12 @@ data UserBackend = UserBackend
 -- function, allowing to chain `loadImage` and, say, `saveImageLayer`
 -- atomically.
 data RegistryBackend = RegistryBackend
-  { loadImage :: ByteString -> ByteString -> IO GetImage
-  , saveImageJson :: ByteString -> ByteString
+  { loadImage :: Text -> Text -> IO GetImage
+  , saveImageJson :: Text -> Text
       -> ImageDescription -> L.ByteString -> IO ()
-  , saveImageLayer :: ByteString -> ByteString -> Handler App App ()
-  , saveImageChecksum :: ByteString -> ByteString -> ByteString -> IO ()
-  , saveImageChecksumOld :: ByteString -> ByteString -> ByteString -> IO ()
+  , saveImageLayer :: Text -> Text -> Handler App App ()
+  , saveImageChecksum :: Text -> Text -> ByteString -> IO ()
+  , saveImageChecksumOld :: Text -> Text -> ByteString -> IO ()
   -- ^ For older checksum header.
   , saveRepository :: ByteString -> ByteString -> [ImageInfo] -> IO ()
   , readTags :: ByteString -> ByteString -> IO Value

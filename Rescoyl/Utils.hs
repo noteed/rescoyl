@@ -3,6 +3,7 @@
 module Rescoyl.Utils where
 
 import Control.Monad (liftM)
+import Control.Monad.Trans (liftIO)
 import Data.Binary.Get (pushChunk, pushChunks)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -12,7 +13,6 @@ import Data.Digest.Pure.SHA (completeSha256Incremental, sha256Incremental, showD
 import qualified Data.Enumerator as E
 import Data.List (isPrefixOf)
 import Data.Version
-import Snap (liftIO)
 import Snap.Core
   ( getHeader, getTimeoutModifier, getsRequest
   , runRequestBody

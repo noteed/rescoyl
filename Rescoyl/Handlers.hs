@@ -13,15 +13,18 @@ import Control.Applicative ((<|>))
 import Control.Exception (SomeException)
 import Control.Monad (when)
 import Control.Monad.CatchIO (catch)
+import Control.Monad.State (gets)
+import Control.Monad.Trans (liftIO)
 import Data.Aeson (decode, encode)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
 import Data.List (intersperse)
+import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Version (showVersion)
-import Snap (gets, liftIO)
 import Snap.Core
   ( emptyResponse, finishWith, getHeader, getParam, getResponse, getsRequest
   , ifTop, logError, method
@@ -108,7 +111,7 @@ getImageAncestry = do
   namespace <- validateGetImage
   Just image <- getParam "image"
   reg <- gets _registry
-  mi <- liftIO $ loadImage reg namespace image
+  mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
     ImageJson _ ancestry -> do
       modifyResponse $ setContentType "application/json"
@@ -129,7 +132,7 @@ getImageJson = do
   Just image <- getParam "image"
   reg <- gets _registry
 
-  mi <- liftIO $ loadImage reg namespace image
+  mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
     ImageJson _ _ -> modifyResponse $
       setResponseStatus 400 "Image upload is in progress."
@@ -148,7 +151,7 @@ getImageLayer = do
   namespace <- validateGetImage
   Just image <- getParam "image"
   reg <- gets _registry
-  mi <- liftIO $ loadImage reg namespace image
+  mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
     ImageJson _ _ -> modifyResponse $
       setResponseStatus 400 "Image upload is in progress."
@@ -178,20 +181,20 @@ putImageJson = do
     Just desc | imageDescriptionId desc /= B.unpack image ->
       modifyResponse $ setResponseStatus 400 "Invalid image ID in JSON."
     Just desc -> do
-      mi <- liftIO $ loadImage reg namespace image
+      mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
       case mi of
         ImageJson _ _ -> do
-          liftIO $ saveImageJson reg namespace image desc body
+          liftIO $ saveImageJson reg namespace (T.decodeUtf8 image) desc body
           writeText "true"
         ImageLayer _ _ _ -> do
-          liftIO $ saveImageJson reg namespace image desc body
+          liftIO $ saveImageJson reg namespace (T.decodeUtf8 image) desc body
           writeText "true"
         Image _ _ _ _ -> modifyResponse $
           setResponseStatus 409 "Image already exists."
         ImageErrorDecodingJson -> modifyResponse $
           setResponseStatus 500 "Error decoding already saved JSON."
         ImageDoesntExist -> do
-          liftIO $ saveImageJson reg namespace image desc body
+          liftIO $ saveImageJson reg namespace (T.decodeUtf8 image) desc body
           writeText "true"
 
 putImageLayer :: Handler App App ()
@@ -199,13 +202,13 @@ putImageLayer = do
   namespace <- validatePutImage
   Just image <- getParam "image"
   reg <- gets _registry
-  mi <- liftIO $ loadImage reg namespace image
+  mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
     ImageJson _ _ -> do
-      saveImageLayer reg namespace image
+      saveImageLayer reg namespace (T.decodeUtf8 image)
       writeText "true"
     ImageLayer _ _ _ -> do
-      saveImageLayer reg namespace image
+      saveImageLayer reg namespace (T.decodeUtf8 image)
       writeText "true"
     Image _ _ _ _ -> modifyResponse $
       setResponseStatus 409 "Image already exists."
@@ -220,12 +223,12 @@ putImageChecksum = do
   Just image <- getParam "image"
   reg <- gets _registry
 
-  mi <- liftIO $ loadImage reg namespace image
+  mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
     ImageJson _ _ -> do
       modifyResponse $ setResponseStatus 404 "Image doesn't exist."
     ImageLayer _ _ (Layer _ _ computed) -> do
-      go computed reg namespace image
+      go computed reg namespace (T.decodeUtf8 image)
     Image _ _ _ _ -> do
       modifyResponse $ setResponseStatus 409 "Checksum already saved."
       modifyResponse $ setContentType "application/json"
@@ -354,8 +357,8 @@ postUser = do
       setResponseStatus 400 "Error decoding JSON."
     Just reg -> do
       m <- liftIO $ isAuthorized us
-        (Just (B.pack $ registrationUsername reg,
-        B.pack $ registrationPassword reg))
+        (Just (T.pack $ registrationUsername reg,
+        T.pack $ registrationPassword reg))
       case m of
         Just _ -> modifyResponse $ setResponseStatus 201 "User created"
         Nothing -> modifyResponse $ setResponseStatus 401 "Unauthorized"
@@ -375,18 +378,18 @@ validatePutRepository' :: Maybe ByteString -> ByteString -> ByteString -> Handle
 validatePutRepository' mauthorization namespace repo = do
   us <- gets _users
   authorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
-  when (authorized /= Just namespace) $ do
+  when (authorized /= Just (T.decodeUtf8 namespace)) $ do
     modifyResponse $ setResponseStatus 401 "Unauthorized"
     r <- getResponse
     finishWith r
 
 -- | Check login, and password.
-validatePutImage :: Handler App App ByteString
+validatePutImage :: Handler App App Text
 validatePutImage = do
   mauthorization <- getsRequest $ getHeader "Authorization"
   validatePutImage' mauthorization
 
-validatePutImage' :: Maybe ByteString -> Handler App App ByteString
+validatePutImage' :: Maybe ByteString -> Handler App App Text
 validatePutImage' mauthorization = do
   us <- gets _users
   authorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
@@ -398,15 +401,15 @@ validatePutImage' mauthorization = do
     Just login -> return login
 
 -- | Check login, and password.
-validateGetImage :: Handler App App ByteString
+validateGetImage :: Handler App App Text
 validateGetImage = validatePutImage
 
 hashBasic :: ByteString -> ByteString -> ByteString
 hashBasic login password = ("Basic " `B.append`) . Base64.encode $
   B.concat [login, ":", password]
 
-unhashBasic :: ByteString -> Maybe (ByteString, ByteString)
+unhashBasic :: ByteString -> Maybe (Text, Text)
 unhashBasic h =
   case Base64.decode . B.dropWhile (== ' ') . B.drop 6 $ h of
-    Right x | [login, password] <- B.split ':' x -> Just (login, password)
+    Right x | [login, password] <- B.split ':' x -> Just (T.decodeUtf8 login, T.decodeUtf8 password)
     _ -> Nothing
