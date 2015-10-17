@@ -90,7 +90,7 @@ echo
 # layers.
 docker run --privileged --dns $DNS_IP -t -i \
   -v `pwd`:/source \
-  noteed/dind:1.1.2 \
+  noteed/dind:1.8.1 \
   wrapdocker /source/test.sh
 
 #  --volumes-from dind-rescoyl

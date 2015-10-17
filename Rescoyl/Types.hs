@@ -51,7 +51,7 @@ data RegistryBackend = RegistryBackend
   , saveImageChecksumOld :: Text -> Text -> ByteString -> IO ()
   -- ^ For older checksum header.
   , saveRepository :: ByteString -> ByteString -> [ImageInfo] -> IO ()
-  , readTags :: ByteString -> ByteString -> IO Value
+  , readTags :: ByteString -> ByteString -> IO [(Text, Text)]
   , saveTag :: ByteString -> ByteString -> ByteString -> L.ByteString -> IO ()
   , readImageIndex :: ByteString -> ByteString -> IO (Maybe [ImageInfo])
   , saveImageIndex :: ByteString -> ByteString -> [ImageInfo] -> Handler App App ()

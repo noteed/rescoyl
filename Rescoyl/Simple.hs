@@ -202,7 +202,7 @@ saveRepository' static namespace repo images = do
     createDirectoryIfMissing True $ dir </> "tags"
     L.writeFile (dir </> "images") $ encode images
 
-readTags' :: FilePath -> ByteString -> ByteString -> IO Value
+readTags' :: FilePath -> ByteString -> ByteString -> IO [(Text, Text)]
 readTags' static namespace repo = do
   let dir = repositoryPath static namespace repo
   names <- do
@@ -212,7 +212,7 @@ readTags' static namespace repo = do
       else return []
   let names' = filter (not . (`elem` [".", ".."])) names
   tags <- mapM (T.readFile . (\n -> dir </> "tags" </> n)) names'
-  return $ object $ zipWith (\a b -> T.pack a .= b) names' tags
+  return $ zipWith (\a b -> (T.pack a, b)) names' tags
 
 saveTag' :: FilePath -> ByteString -> ByteString
   -> ByteString -> L.ByteString -> IO ()

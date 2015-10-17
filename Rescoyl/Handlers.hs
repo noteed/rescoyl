@@ -7,15 +7,13 @@
 -- See `appInit` in the main script to see how to use your own backends.
 module Rescoyl.Handlers where
 
-import Prelude hiding (catch)
-
 import Control.Applicative ((<|>))
 import Control.Exception (SomeException)
 import Control.Monad (when)
 import Control.Monad.CatchIO (catch)
 import Control.Monad.State (gets)
 import Control.Monad.Trans (liftIO)
-import Data.Aeson (decode, encode)
+import Data.Aeson (decode, encode, object, (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as B
@@ -67,7 +65,8 @@ routes endpoints =
     if repo == "images" then pass else putRepository endpoints)
 
   , ("/v1/repositories/:repo/tags/:tag", ifTop $ method PUT putTag)
-  , ("/v1/repositories/:namespace/:repo/tags/:tag", ifTop $ method PUT putTag)
+  , ("/v1/repositories/:namespace/:repo/tags/:tag", ifTop $
+    method GET getTag <|> method PUT putTag)
 
   , ("/v1/repositories/:repo/images", ifTop $
     method GET (getImageIndex endpoints) <|> method PUT putImageIndex)
@@ -292,6 +291,19 @@ putRepository endpoints = do
     Just images -> liftIO $ saveRepository reg namespace repo images
   writeText "\"\""
 
+getTag :: Handler App App ()
+getTag = do
+  Just namespace <- getParam "namespace"
+  Just repo <- getParam "repo"
+  Just tag <- getParam "tag"
+  reg <- gets _registry
+  dict <- liftIO $ readTags reg namespace repo
+  case lookup (T.decodeUtf8 tag) dict of
+    Nothing -> modifyResponse $ setResponseStatus 404 "No Found"
+    Just hash -> do
+      modifyResponse $ setContentType "application/json"
+      writeLBS $ encode hash
+
 putTag :: Handler App App ()
 putTag = do
   Just namespace <- getParam "namespace"
@@ -310,7 +322,7 @@ getTags = do
   reg <- gets _registry
   dict <- liftIO $ readTags reg namespace repo
   modifyResponse $ setContentType "application/json"
-  writeLBS $ encode dict
+  writeLBS $ encode $ object $ map (uncurry (.=)) dict
 
 getImageIndex :: [String] -> Handler App App ()
 getImageIndex endpoints = do
