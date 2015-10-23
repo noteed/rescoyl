@@ -173,7 +173,7 @@ putImageJson = do
   namespace <- validatePutImage
   Just image <- getParam "image"
   reg <- gets _registry
-  body <- readRequestBody 4096 -- TODO correct size.
+  body <- readRequestBody 65536 -- TODO correct size.
   case decode body of
     Nothing -> modifyResponse $
       setResponseStatus 400 "Error decoding JSON."
@@ -284,7 +284,7 @@ putRepository endpoints = do
   addEndpointsHeader endpoints
   modifyResponse $ setHeader "X-Docker-Token" token
   modifyResponse $ setHeader "WWW-Authenticate" token
-  body <- readRequestBody 4096 -- TODO Correct size, validate content.
+  body <- readRequestBody 65536 -- TODO Correct size, validate content.
   case decode body of
     Nothing -> modifyResponse $
       setResponseStatus 400 "Error decoding JSON."
@@ -343,7 +343,7 @@ putImageIndex = do
   Just repo <- getParam "repo"
   validatePutRepository namespace repo
   reg <- gets _registry
-  body <- readRequestBody 4096 -- TODO correct size
+  body <- readRequestBody 65536 -- TODO correct size
   case decode body of
     Nothing -> modifyResponse $
       setResponseStatus 400 "Error decoding JSON."
