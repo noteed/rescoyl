@@ -8,7 +8,7 @@ import Control.Applicative ((<$>))
 import Control.Exception (bracket_)
 import Control.Monad.Trans (liftIO)
 import Crypto.PasswordStore (makePassword, verifyPassword)
-import Data.Aeson (decode, encode, object, (.=), Value)
+import Data.Aeson (decode, encode)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
@@ -44,6 +44,19 @@ imagePath :: FilePath -> Text -> Text -> FilePath
 imagePath static namespace image =
   static </> "v1" </> T.unpack namespace </> "images" </> T.unpack image
 
+-- | Check if at least one repository contains a given image.
+-- Return the first namespace from which the image can be obtained.
+isImageInRepositories :: FilePath -> Text -> [(Text, Text)] -> IO (Maybe Text)
+isImageInRepositories _ _ [] = return Nothing
+isImageInRepositories static image ((namespace, repo):rest) = do
+  info <- readImageIndex' static (T.encodeUtf8 namespace) (T.encodeUtf8 repo)
+  case info of
+    Nothing -> return Nothing
+    Just images ->
+      if T.unpack image `elem` map imageInfoId images
+      then return (Just namespace)
+      else isImageInRepositories static image rest
+
 notFound :: Handler App App ()
 notFound = do
   modifyResponse $ setResponseStatus 404 "Not Found"
@@ -51,25 +64,32 @@ notFound = do
   r <- getResponse
   finishWith r
 
--- | Mapping login / hashed password.
-type Users = Map Text Text
+-- | Mapping login / hashed password, and list of public repositories.
+type Users = (Map Text Text, [(Text, Text)])
 
 initUserBackend :: FilePath -> IO UserBackend
 initUserBackend static = do
   us <- readUsers static
   return UserBackend
     { isAuthorized = isAuthorized' us
+    , isAllowedToReadImage = isAllowedToReadImage' us static
     }
 
 readUsers :: FilePath -> IO Users
 readUsers static = do
   let path = static </> "users"
   e <- liftIO $ doesFileExist path
-  if not e
-    then return M.empty
+  let path' = static </> "public-images"
+  e' <- liftIO $ doesFileExist path'
+  if not e || not e'
+    then return (M.empty, [])
     else do
       musers <- decode <$> L.readFile path
-      maybe (error "Can't read users file.") return musers
+      mimages <- decode <$> L.readFile path'
+      case (musers, mimages) of
+        (Nothing, _) -> error "Can't read users file."
+        (_, Nothing) -> error "Can't read public-images file."
+        (Just users, Just images) -> return (users, images)
 
 writeUsers :: FilePath -> Users -> IO ()
 writeUsers static us = do
@@ -95,10 +115,29 @@ withEcho echo action = do
 isAuthorized' :: Users -> Maybe (Text, Text) -> IO (Maybe Text)
 isAuthorized' _ Nothing = return Nothing
 isAuthorized' us (Just (login, password)) =
-  case M.lookup login us of
+  case M.lookup login (fst us) of
     Just hashedPassword | verifyPassword (T.encodeUtf8 password) (T.encodeUtf8 hashedPassword) ->
       return $ Just login
     _ -> return Nothing
+
+-- | Check a login and image for access rights.
+-- Return a namespace from which the image can be obtained.
+isAllowedToReadImage' :: Users -> FilePath -> Maybe Text -> Text
+  -> IO (Maybe (Text, Authorization))
+isAllowedToReadImage' us static mlogin image = do
+  -- Login provided; check if image is in the login's repos or in a read-only
+  -- repo.
+  -- No login; check if image is in a read-only repo.
+  repos <- case mlogin of
+    Just login -> map (login,) <$>
+      listRepositories static (T.encodeUtf8 login)
+    Nothing -> return []
+  mnamespace <- isImageInRepositories static image (repos ++ snd us)
+  case mnamespace of
+    Just namespace | mnamespace == mlogin ->
+      return (Just (namespace, ReadWrite))
+    Just namespace -> return (Just (namespace, ReadOnly))
+    Nothing -> return Nothing
 
 initRegistryBackend :: FilePath -> IO RegistryBackend
 initRegistryBackend static = do
@@ -245,3 +284,14 @@ saveImageIndex' static namespace repo new = do
     Just original -> do
       liftIO $ L.writeFile path $ encode $ combineImageInfo original new
       modifyResponse $ setResponseStatus 204 "No Content"
+
+listRepositories :: FilePath -> ByteString -> IO [Text]
+listRepositories static namespace = do
+  let dir = static </> "v1" </> B.unpack namespace </> "repositories"
+  names <- do
+    e <- doesDirectoryExist dir
+    if e
+      then getDirectoryContents dir
+      else return []
+  let names' = filter (not . (`elem` [".", ".."])) names
+  return (map T.pack names')

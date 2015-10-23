@@ -131,7 +131,7 @@ runCmd CmdAddUser{..} = do
   static <- canonicalizePath cmdStore
   us <- readUsers static
   (login, hashedPassword) <- makeUser
-  let us' = M.insert login hashedPassword us
+  let us' = (M.insert login hashedPassword (fst us), snd us)
   writeUsers static us'
 
 appInit :: FilePath -> [String] -> SnapletInit App App

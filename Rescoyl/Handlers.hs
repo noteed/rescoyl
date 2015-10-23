@@ -107,8 +107,8 @@ ping = withSession sess $ do
 
 getImageAncestry :: Handler App App ()
 getImageAncestry = do
-  namespace <- validateGetImage
   Just image <- getParam "image"
+  namespace <- validateGetImage image
   reg <- gets _registry
   mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
@@ -127,8 +127,8 @@ getImageAncestry = do
 
 getImageJson :: Handler App App ()
 getImageJson = do
-  namespace <- validateGetImage
   Just image <- getParam "image"
+  namespace <- validateGetImage image
   reg <- gets _registry
 
   mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
@@ -147,8 +147,8 @@ getImageJson = do
 
 getImageLayer :: Handler App App ()
 getImageLayer = do
-  namespace <- validateGetImage
   Just image <- getParam "image"
+  namespace <- validateGetImage image
   reg <- gets _registry
   mi <- liftIO $ loadImage reg namespace (T.decodeUtf8 image)
   case mi of
@@ -413,8 +413,22 @@ validatePutImage' mauthorization = do
     Just login -> return login
 
 -- | Check login, and password.
-validateGetImage :: Handler App App Text
-validateGetImage = validatePutImage
+validateGetImage :: ByteString -> Handler App App Text
+validateGetImage image = do
+  mauthorization <- getsRequest $ getHeader "Authorization"
+  validateGetImage' image mauthorization
+
+validateGetImage' :: ByteString -> Maybe ByteString -> Handler App App Text
+validateGetImage' image mauthorization = do
+  us <- gets _users
+  mauthorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
+  mrights <- liftIO $ isAllowedToReadImage us mauthorized (T.decodeUtf8 image)
+  case mrights of
+    Nothing -> do
+      modifyResponse $ setResponseStatus 401 "Unauthorized"
+      r <- getResponse
+      finishWith r
+    Just (namespace,_) -> return namespace
 
 hashBasic :: ByteString -> ByteString -> ByteString
 hashBasic login password = ("Basic " `B.append`) . Base64.encode $

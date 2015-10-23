@@ -26,7 +26,11 @@ import Snap.Snaplet.Session (SessionManager)
 data UserBackend = UserBackend
   { isAuthorized :: Maybe (Text, Text) -> IO (Maybe Text)
   -- ^ Given a username and password, this returns the user's namespace.
+  , isAllowedToReadImage :: Maybe Text -> Text -> IO (Maybe (Text, Authorization))
+  -- ^ Given a username and image, this returns access rights for that image.
   }
+
+data Authorization = ReadOnly | ReadWrite | WriteOnly
 
 -- | This interface is used to store the repositories and images.
 -- TODO The Handler App App () types must be replaced by non-HTTP-related code.

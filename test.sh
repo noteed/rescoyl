@@ -23,10 +23,9 @@ docker tag registry.local/quux/bar registry.local/quux/bar:beta
 
 # Pre-create the .dockercfg file so that hitting the registry doens't cause the
 # docker client to ask for a username and a password
-echo -n '{"registry.local":{"auth":"' > /.dockercfg
-echo -n 'quux:thud' | openssl enc -base64 -A >> /.dockercfg
-echo '","email":"quux@example.com"}}' >> /.dockercfg
-cp /.dockercfg /root/.dockercfg
+echo -n '{"registry.local":{"auth":"' > /root/.dockercfg
+echo -n 'quux:thud' | openssl enc -base64 -A >> /root/.dockercfg
+echo '","email":"quux@example.com"}}' >> /root/.dockercfg
 
 docker push registry.local/quux/bar
 docker rmi registry.local/quux/bar
@@ -40,6 +39,10 @@ docker push registry.local/quux/bar
 docker rmi registry.local/quux/bar
 # registry.local/quux/bar:alpha doens't exist locally
 docker rmi registry.local/quux/bar:beta
+
+# Try to pull a "public" image.
+mv /root/.dockercfg /root/.dockercfg-deactivated
+docker run --rm registry.local/quux/bar | grep -q "Hello, world" || die "Expected 'Hello, world'"
 
 cd /source
 ./rescoyl-checks docker-all

@@ -10,5 +10,6 @@ RUN apt-get install -q -y libgmp10
 ADD dist/build/rescoyl/rescoyl /usr/bin/rescoyl
 RUN mkdir /store
 ADD sample.users /store/users
+ADD sample.public-images /store/public-images
 
 CMD rescoyl serve
