@@ -404,15 +404,17 @@ validatePutImage = do
 validatePutImage' :: Maybe ByteString -> Handler App App Text
 validatePutImage' mauthorization = do
   us <- gets _users
-  authorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
-  case authorized of
+  mauthorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
+  mnamespace <- liftIO $ isAllowedToWriteNamespace us mauthorized
+  case mnamespace of
     Nothing -> do
       modifyResponse $ setResponseStatus 401 "Unauthorized"
       r <- getResponse
       finishWith r
-    Just login -> return login
+    Just namespace -> return namespace
 
--- | Check login, and password.
+-- | Check login, and password, returns a namespace from which
+-- the image can be read.
 validateGetImage :: ByteString -> Handler App App Text
 validateGetImage image = do
   mauthorization <- getsRequest $ getHeader "Authorization"
@@ -422,13 +424,13 @@ validateGetImage' :: ByteString -> Maybe ByteString -> Handler App App Text
 validateGetImage' image mauthorization = do
   us <- gets _users
   mauthorized <- liftIO $ isAuthorized us (mauthorization >>= unhashBasic)
-  mrights <- liftIO $ isAllowedToReadImage us mauthorized (T.decodeUtf8 image)
-  case mrights of
+  mnamespace <- liftIO $ isAllowedToReadImage us mauthorized (T.decodeUtf8 image)
+  case mnamespace of
     Nothing -> do
       modifyResponse $ setResponseStatus 401 "Unauthorized"
       r <- getResponse
       finishWith r
-    Just (namespace,_) -> return namespace
+    Just namespace -> return namespace
 
 hashBasic :: ByteString -> ByteString -> ByteString
 hashBasic login password = ("Basic " `B.append`) . Base64.encode $

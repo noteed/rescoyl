@@ -26,8 +26,12 @@ import Snap.Snaplet.Session (SessionManager)
 data UserBackend = UserBackend
   { isAuthorized :: Maybe (Text, Text) -> IO (Maybe Text)
   -- ^ Given a username and password, this returns the user's namespace.
-  , isAllowedToReadImage :: Maybe Text -> Text -> IO (Maybe (Text, Authorization))
-  -- ^ Given a username and image, this returns access rights for that image.
+  , isAllowedToReadImage :: Maybe Text -> Text -> IO (Maybe Text)
+  -- ^ Given a username and image, this returns a namespace from which the
+  -- image can be read.
+  , isAllowedToWriteNamespace :: Maybe Text -> IO (Maybe Text)
+  -- ^ Given a username, this returns a namespace where the username can
+  -- write (usually the username itself).
   }
 
 data Authorization = ReadOnly | ReadWrite | WriteOnly

@@ -123,7 +123,7 @@ isAuthorized' us (Just (login, password)) =
 -- | Check a login and image for access rights.
 -- Return a namespace from which the image can be obtained.
 isAllowedToReadImage' :: Users -> FilePath -> Maybe Text -> Text
-  -> IO (Maybe (Text, Authorization))
+  -> IO (Maybe Text)
 isAllowedToReadImage' us static mlogin image = do
   -- Login provided; check if image is in the login's repos or in a read-only
   -- repo.
@@ -135,9 +135,12 @@ isAllowedToReadImage' us static mlogin image = do
   mnamespace <- isImageInRepositories static image (repos ++ snd us)
   case mnamespace of
     Just namespace | mnamespace == mlogin ->
-      return (Just (namespace, ReadWrite))
-    Just namespace -> return (Just (namespace, ReadOnly))
+      return (Just namespace)
+    Just namespace -> return (Just namespace)
     Nothing -> return Nothing
+
+isAllowedToWriteNamespace :: Maybe Text -> IO (Maybe Text)
+isAllowedToWriteNamespace = return
 
 initRegistryBackend :: FilePath -> IO RegistryBackend
 initRegistryBackend static = do
