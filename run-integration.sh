@@ -17,23 +17,13 @@
 NGINX_AUTH=$1
 TEST_IP_PORT=$2
 
-# The docker client wants HTTPS with valid certificate. We generate a
-# self-signed certificate.
-./generate-certificate.sh
-
 # We generate a password files (used by Nginx if it is in charge of Basic
 # auth). In the case of Rescoyl, an equivalent file called `sample.users`
 # is injected in the Docker image.
 echo quux:$(openssl passwd -crypt thud) > nginx/registry.passwd
 
 # Select the Nginx configuration file with or without Basic auth.
-if [ $NGINX_AUTH == "yes" ] ; then
-  NGINX_CONF=registry.local
-  sed -i "s/^  server  .*/  server  $TEST_IP_PORT;/" nginx/registry.local
-else
-  NGINX_CONF=rescoyl.local
-  sed -i "s/^  server  .*/  server  $TEST_IP_PORT;/" nginx/rescoyl.local
-fi
+sed -i "s/^  server  .*/  server  $TEST_IP_PORT;/" nginx/${NGINX_CONF}
 
 # Run Nginx, passing the chosen configuration file, password file,
 # self-signed certificate, and key.
@@ -46,6 +36,7 @@ NGINX_ID=$(docker run -d \
   noteed/nginx
   )
 NGINX_IP=$(docker inspect $NGINX_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
+#NGINX_IP=$(docker inspect $REGISTRY_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
 
 # Run mitmproxy. mitmproxy traces can be inspected with:
 #
@@ -61,6 +52,7 @@ MITM_ID=$(docker run -d \
     --cert /self-key-and-certificate.pem
   )
 REGISTRY_IP=$(docker inspect $MITM_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
+#REGISTRY_IP=$(docker inspect $REGISTRY_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
 
 # Setup a static DNS server so that the test container sees the tested
 # container as registry.local.
@@ -90,13 +82,13 @@ echo
 # layers.
 docker run --privileged --dns $DNS_IP -t -i \
   -v `pwd`:/source \
-  noteed/dind:1.8.1 \
+  noteed/dind:1.9 \
   wrapdocker /source/test.sh
 
 #  --volumes-from dind-rescoyl
 
 # Some cleanup.
-docker kill $DNS $NGINX_ID $MITM_ID
-docker rm $DNS $NGINX_ID $MITM_ID
+#docker kill $DNS $NGINX_ID $MITM_ID
+#docker rm $DNS $NGINX_ID $MITM_ID
 rm -f self-certificate.crt self-key-and-certificate.pem self-private.key
 rm -f nginx/registry.passwd
