@@ -80,6 +80,12 @@ routes endpoints =
     method POST postUser <|>
     method PUT (error "TODO PUT /v1/users"))
 
+  , ("/v2", ifTop (method GET v2Page))
+  , ("/v2/:namespace/:repo/blobs/uploads", ifTop (method POST v2StartUpload))
+  , ("/v2/:namespace/:repo/blobs/uploads/:uuid", ifTop
+      (method PATCH v2UploadChunk <|> method PUT v2CompleteUpload))
+  , ("/v2/:namespace/:repo/blobs/:digest", ifTop (method HEAD v2HeadLayer))
+
   , ("/500", error "Intentional 500.")
   ]
 
@@ -441,3 +447,37 @@ unhashBasic h =
   case Base64.decode . B.dropWhile (== ' ') . B.drop 6 $ h of
     Right x | [login, password] <- B.split ':' x -> Just (T.decodeUtf8 login, T.decodeUtf8 password)
     _ -> Nothing
+
+----------------------------------------------------------------------
+-- Protocol 2
+----------------------------------------------------------------------
+
+v2Page :: Handler App App ()
+v2Page = do
+  -- The official registry also sets charset=utf-8, which seems out
+  -- of spec for application/json.
+  modifyResponse (setContentType "application/json")
+  modifyResponse setApiVersion
+  writeLBS (encode (object []))
+
+-- | If a "digest" parameter is provided, this is a "direct" upload, without
+-- a get-uuid and complete-uuid process.
+v2StartUpload :: Handler App App ()
+v2StartUpload = do
+  -- Specs says that Location and UUID are actually opaque strings.
+  -- The official registry also sets a ?_state= parameter.
+  modifyResponse (setResponseStatus 202 "Accepted")
+  modifyResponse (setContentType "text/plain; charset=utf-8")
+  modifyResponse (setHeader "Location"
+    "/v2/username/repository/blobs/uploads/de305d54-75b4-431b-adb2-eb6b9e546014")
+  modifyResponse setApiVersion
+  -- The official registry sets an explicit content-length.
+  -- modifyResponse (setContentLength 0)
+  modifyResponse (setHeader "Docker-Upload-Uuid" "de305d54-75b4-431b-adb2-eb6b9e546014")
+  -- The official registry sets a Range: 0-0 (for resumable uploads)
+  -- modifyResponse (setRange 0 0)
+
+setApiVersion = setHeader "Docker-Distribution-Api-Version" "registry/2.0"
+
+-- Used by the official registry.
+setNoSniff = setHeader "X-Content-Type-Options" "nosniff"
