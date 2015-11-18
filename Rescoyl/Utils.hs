@@ -19,7 +19,7 @@ import Snap.Core
   , MonadSnap(..))
 import Snap.Snaplet (Handler)
 import System.Directory (renameFile)
-import System.FilePath ((<.>))
+import System.FilePath ((<.>), (</>))
 import System.IO (hClose, hFlush)
 import System.IO.Temp (openTempFile)
 import Text.ParserCombinators.ReadP (readP_to_S)
@@ -76,6 +76,24 @@ saveImageLayerToFile json path = do
     hClose h
     renameFile fn path
   return (digest, size - n)
+
+-- | Write the request body (expected to be an image layer) to disk.
+-- Return its checksum and size. The file location is constructed from the
+-- checksum.
+saveImageLayerToFile' :: MonadSnap m => FilePath -> m (ByteString, Int)
+saveImageLayerToFile' dir = do
+  let decoder = pushChunk sha256Incremental ""
+  bump <- liftM ($ max 15) getTimeoutModifier
+  -- The temporary file must be located at the same place than the final file.
+  -- This is necessary because the `renameFile` operation won't work if the
+  -- data store is a Docker bind-mount and the temporary location isn't.
+  (fn, h) <- liftIO $ openTempFile "/" $ dir </> "layer.temp"
+  (digest, size) <- runRequestBody $ iterHandle' decoder 0 bump h
+  liftIO $ do
+    hFlush h
+    hClose h
+    renameFile fn (dir </> BC.unpack digest)
+  return (digest, size)
 
 --iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
 iterHandle' decoder n' bump h = E.continue $ step decoder n' where

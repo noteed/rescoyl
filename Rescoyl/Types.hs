@@ -65,6 +65,10 @@ data RegistryBackend = RegistryBackend
   , saveImageIndex :: ByteString -> ByteString -> [ImageInfo] -> Handler App App ()
   }
 
+data Registry2Backend = Registry2Backend
+  { v2SaveImageLayer :: Text -> Text -> Handler App App (ByteString, Int)
+  }
+
 -- | The minimal data that a server has about an image is its JSON meta-data.
 -- Without that meta-data, the image doesn't exist.
 data GetImage =
@@ -173,6 +177,7 @@ data App = App
   { _sess :: Snaplet SessionManager
   , _users :: UserBackend
   , _registry :: RegistryBackend
+  , _registry2 :: Registry2Backend
   }
 
 makeLenses ''App

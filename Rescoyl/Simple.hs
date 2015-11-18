@@ -5,7 +5,9 @@
 module Rescoyl.Simple where
 
 import Control.Applicative ((<$>))
+import Control.Concurrent.STM.TVar
 import Control.Exception (bracket_)
+import Control.Monad.STM
 import Control.Monad.Trans (liftIO)
 import Crypto.PasswordStore (makePassword, verifyPassword)
 import Data.Aeson (decode, encode)
@@ -31,7 +33,7 @@ import System.IO (hFlush, hGetEcho, hSetEcho, stdin, stdout)
 import System.Posix (fileSize, getFileStatus)
 
 import Rescoyl.Types
-import Rescoyl.Utils (saveImageLayerToFile)
+import Rescoyl.Utils (saveImageLayerToFile, saveImageLayerToFile')
 
 -- TODO Instead of generating the 404s, or 50Xs here, return a data type
 -- representing the failure.
@@ -43,6 +45,10 @@ repositoryPath static namespace repo =
 imagePath :: FilePath -> Text -> Text -> FilePath
 imagePath static namespace image =
   static </> "v1" </> T.unpack namespace </> "images" </> T.unpack image
+
+blobsDir :: FilePath -> Text -> FilePath
+blobsDir static namespace =
+  static </> "v2" </> T.unpack namespace </> "blobs"
 
 -- | Check if at least one repository contains a given image.
 -- Return the first namespace from which the image can be obtained.
@@ -298,3 +304,35 @@ listRepositories static namespace = do
       else return []
   let names' = filter (not . (`elem` [".", ".."])) names
   return (map T.pack names')
+
+----------------------------------------------------------------------
+-- Protocol 2
+-- There shouldn't be a separate backend. This is temporary to have
+-- some "real" code behind the v2 handlers (e.g. to consume request's
+-- bodies or generate IDs).
+----------------------------------------------------------------------
+
+-- | Map (namespace, uuid) to an upload state.
+data TransientState = TransientState (TVar (Map (Text, Text) UploadState))
+
+data UploadState = UploadState
+
+initRegistry2Backend :: FilePath -> IO Registry2Backend
+initRegistry2Backend static = do
+  uploads <- atomically (newTVar M.empty)
+  state <- return (TransientState uploads)
+  return Registry2Backend
+    { v2SaveImageLayer = v2SaveImageLayer' state static
+    }
+
+v2SaveImageLayer' :: TransientState -> FilePath -> Text -> Text -> Handler App App (ByteString, Int)
+v2SaveImageLayer' (TransientState state) static namespace uuid = do
+  let dir = blobsDir static namespace </> (T.unpack uuid)
+  liftIO (createDirectoryIfMissing True dir)
+  -- TODO how to bracket open/close with iterHandle in between ?
+  (checksum, size) <- saveImageLayerToFile "" (dir </> "layer")
+  liftIO (atomically (do
+    uploads <- readTVar state
+    writeTVar state (M.insert (namespace, uuid) UploadState uploads)))
+  -- liftIO $ B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
+  return (checksum, size)

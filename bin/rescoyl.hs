@@ -36,7 +36,7 @@ main = (runCmd =<<) $ cmdArgs $
 -- | String with the program name, version and copyright.
 versionString :: String
 versionString = "rescoyl " ++ showVersion version ++
-  " - Copyright (c) 2013-2104 Vo Minh Thu."
+  " - Copyright (c) 2013-2105 Vo Minh Thu."
 
 -- | Data type representing the different command-line subcommands.
 data Cmd =
@@ -140,8 +140,9 @@ appInit static endpoints = makeSnaplet "rescoyl" description Nothing $ do
     initCookieSessionManager "session.key" "session" Nothing
   us <- liftIO $ initUserBackend static
   r <- liftIO $ initRegistryBackend static
+  r2 <- liftIO $ initRegistry2Backend static
   addRoutes $ routes endpoints
   wrapSite catch500
-  return $ App s us r
+  return $ App s us r r2
 
   where description = "Rescoyl, a private Docker registry."

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoMonomorphismRestriction #-} -- For the specialized setXXX headers.
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- | This module defines the Snap routes and handlers. It is supposed to deal
@@ -7,7 +8,7 @@
 -- See `appInit` in the main script to see how to use your own backends.
 module Rescoyl.Handlers where
 
-import Control.Applicative ((<|>))
+import Control.Applicative ((<|>), (<$>))
 import Control.Exception (SomeException)
 import Control.Monad (when)
 import Control.Monad.CatchIO (catch)
@@ -22,12 +23,15 @@ import Data.List (intersperse)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUID
 import Data.Version (showVersion)
 import Snap.Core
   ( emptyResponse, finishWith, getHeader, getParam, getResponse, getsRequest
   , ifTop, logError, method
   , modifyResponse, pass, putResponse, readRequestBody
-  , setContentType, setHeader, setResponseStatus, writeLBS, writeText
+  , setContentType, setContentLength, setHeader, setResponseStatus, writeLBS
+  , writeText
   , Method(..))
 import Snap.Snaplet (Handler)
 import Snap.Snaplet.Session (withSession)
@@ -108,7 +112,7 @@ v1Page = do
 
 ping :: Handler App App ()
 ping = withSession sess $ do
-  modifyResponse $ setHeader "X-Docker-Registry-Version" "0.6.0"
+  modifyResponse $ setHeader "X-Docker-Registry-Version" "0.7.0"
   writeText "true"
 
 getImageAncestry :: Handler App App ()
@@ -460,24 +464,63 @@ v2Page = do
   modifyResponse setApiVersion
   writeLBS (encode (object []))
 
--- | If a "digest" parameter is provided, this is a "direct" upload, without
--- a get-uuid and complete-uuid process.
+-- | TODO If a "digest" parameter is provided, this is a "direct" upload,
+-- without a get-uuid and complete-uuid process.
 v2StartUpload :: Handler App App ()
 v2StartUpload = do
+  Just namespace <- getParam "namespace"
+  Just _ <- getParam "repo"
+  reg2 <- gets _registry2
+  uuid <- liftIO UUID.nextRandom
+  (digest, size) <- v2SaveImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
+
   -- Specs says that Location and UUID are actually opaque strings.
   -- The official registry also sets a ?_state= parameter.
   modifyResponse (setResponseStatus 202 "Accepted")
   modifyResponse (setContentType "text/plain; charset=utf-8")
   modifyResponse (setHeader "Location"
-    "/v2/username/repository/blobs/uploads/de305d54-75b4-431b-adb2-eb6b9e546014")
+    (B.append "/v2/quux/bar/blobs/uploads/" (UUID.toASCIIBytes uuid)))
   modifyResponse setApiVersion
-  -- The official registry sets an explicit content-length.
-  -- modifyResponse (setContentLength 0)
-  modifyResponse (setHeader "Docker-Upload-Uuid" "de305d54-75b4-431b-adb2-eb6b9e546014")
-  -- The official registry sets a Range: 0-0 (for resumable uploads)
-  -- modifyResponse (setRange 0 0)
+  modifyResponse (setHeader "Docker-Upload-Uuid" (UUID.toASCIIBytes uuid))
+  modifyResponse (setRange 0 size)
+
+v2UploadChunk :: Handler App App ()
+v2UploadChunk = do
+  Just namespace <- getParam "namespace"
+  Just _ <- getParam "repo"
+  Just uuid <- (>>= UUID.fromASCIIBytes) <$> getParam "uuid"
+  reg2 <- gets _registry2
+  (digest, size) <- v2SaveImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
+
+  modifyResponse (setResponseStatus 202 "Accepted")
+  modifyResponse (setContentType "text/plain; charset=utf-8")
+  modifyResponse (setHeader "Location"
+    (B.append "/v2/quux/bar/blobs/uploads/" (UUID.toASCIIBytes uuid)))
+  modifyResponse setApiVersion
+  modifyResponse (setHeader "Docker-Upload-Uuid" (UUID.toASCIIBytes uuid))
+  modifyResponse (setRange 0 size)
+
+v2CompleteUpload :: Handler App App ()
+v2CompleteUpload = do
+  modifyResponse (setResponseStatus 201 "Created")
+  modifyResponse (setContentType "text/plain; charset=utf-8")
+  modifyResponse setApiVersion
+  modifyResponse (setHeader "Docker-Content-Digest" "some-digest")
+  modifyResponse (setHeader "Location"
+    "/v2/quux/bar/blobs/some-digest")
+
+v2HeadLayer :: Handler App App ()
+v2HeadLayer = do
+  modifyResponse (setResponseStatus 200 "OK")
+  modifyResponse (setContentType "application/octet-stream")
+  modifyResponse setApiVersion
+  modifyResponse (setHeader "Docker-Content-Digest" "some-digest")
+  -- The official registry adds Accept-Ranges, Cache-Control, Content-Length
+  -- and Etag headers
 
 setApiVersion = setHeader "Docker-Distribution-Api-Version" "registry/2.0"
 
 -- Used by the official registry.
 setNoSniff = setHeader "X-Content-Type-Options" "nosniff"
+
+setRange a b = setHeader "Range" (B.pack (concat [show a, "-", show b]))
