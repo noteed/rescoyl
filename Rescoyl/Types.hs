@@ -14,6 +14,7 @@ import Data.List (foldl')
 import qualified Data.Map as M
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as L
+import Data.Int (Int64)
 import Data.Text (Text)
 import Snap.Snaplet (Handler, Snaplet)
 import Snap.Snaplet.Session (SessionManager)
@@ -66,7 +67,10 @@ data RegistryBackend = RegistryBackend
   }
 
 data Registry2Backend = Registry2Backend
-  { v2SaveImageLayer :: Text -> Text -> Handler App App (ByteString, Int)
+  { v2StartImageLayer :: Text -> Handler App App (Int, Text)
+  , v2ContinueImageLayer :: Text -> Text -> Handler App App Int
+  , v2CompleteImageLayer :: Text -> Text -> Handler App App (ByteString, Int)
+  , v2GetImageLayerInfo :: Text -> Text -> Handler App App (Maybe Int64)
   }
 
 -- | The minimal data that a server has about an image is its JSON meta-data.

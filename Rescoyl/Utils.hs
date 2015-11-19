@@ -20,7 +20,7 @@ import Snap.Core
 import Snap.Snaplet (Handler)
 import System.Directory (renameFile)
 import System.FilePath ((<.>), (</>))
-import System.IO (hClose, hFlush)
+import System.IO (hClose, hFlush, openFile, IOMode(AppendMode))
 import System.IO.Temp (openTempFile)
 import Text.ParserCombinators.ReadP (readP_to_S)
 
@@ -70,7 +70,8 @@ saveImageLayerToFile json path = do
   -- This is necessary because the `renameFile` operation won't work if the
   -- data store is a Docker bind-mount and the temporary location isn't.
   (fn, h) <- liftIO $ openTempFile "/" $ path <.> "temp"
-  (digest, size) <- runRequestBody $ iterHandle' decoder n bump h
+  (dec, size) <- runRequestBody $ iterHandle' decoder n bump h
+  let digest =  (BC.pack . showDigest) (completeSha256Incremental dec size)
   liftIO $ do
     hFlush h
     hClose h
@@ -80,15 +81,31 @@ saveImageLayerToFile json path = do
 -- | Write the request body (expected to be an image layer) to disk.
 -- Return its checksum and size. The file location is constructed from the
 -- checksum.
-saveImageLayerToFile' :: MonadSnap m => FilePath -> m (ByteString, Int)
-saveImageLayerToFile' dir = do
+--startImageLayerToFile :: MonadSnap m => FilePath -> m (ByteString, Int)
+startImageLayerToFile dir = do
   let decoder = pushChunk sha256Incremental ""
   bump <- liftM ($ max 15) getTimeoutModifier
   -- The temporary file must be located at the same place than the final file.
   -- This is necessary because the `renameFile` operation won't work if the
   -- data store is a Docker bind-mount and the temporary location isn't.
-  (fn, h) <- liftIO $ openTempFile "/" $ dir </> "layer.temp"
-  (digest, size) <- runRequestBody $ iterHandle' decoder 0 bump h
+  (fn, h) <- liftIO (openTempFile dir "layer.temp")
+  (dec, size) <- runRequestBody (iterHandle' decoder 0 bump h)
+  liftIO (hFlush h >> hClose h)
+  return (fn, dec, size)
+
+--appendImageLayerToFile :: MonadSnap m => FilePath -> m (ByteString, Int)
+appendImageLayerToFile fn decoder n = do
+  bump <- liftM ($ max 15) getTimeoutModifier
+  h <- liftIO (openFile fn AppendMode)
+  (dec, size) <- runRequestBody (iterHandle' decoder n bump h)
+  liftIO (hFlush h >> hClose h)
+  return (dec, size)
+
+completeImageLayerToFile fn decoder n dir = do
+  bump <- liftM ($ max 15) getTimeoutModifier
+  h <- liftIO (openFile fn AppendMode)
+  (dec, size) <- runRequestBody (iterHandle' decoder n bump h)
+  let digest =  (BC.pack . showDigest) (completeSha256Incremental dec size)
   liftIO $ do
     hFlush h
     hClose h
@@ -98,7 +115,7 @@ saveImageLayerToFile' dir = do
 --iterHandle' :: MonadIO m => IO.Handle -> Iteratee ByteString m ()
 iterHandle' decoder n' bump h = E.continue $ step decoder n' where
   step !dec !n E.EOF =
-    E.yield (BC.pack . showDigest $ completeSha256Incremental dec n, n) E.EOF
+    E.yield (dec, n) E.EOF
   step !dec !n (E.Chunks []) = E.continue $ step dec n
   step !dec !n (E.Chunks bytes) = do
     E.tryIO (mapM_ (B.hPut h) bytes)

@@ -11,15 +11,20 @@ import Control.Monad.STM
 import Control.Monad.Trans (liftIO)
 import Crypto.PasswordStore (makePassword, verifyPassword)
 import Data.Aeson (decode, encode)
+import Data.Binary.Get (Decoder)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as L
+import Data.Digest.Pure.SHA (SHA256State)
+import Data.Int (Int64)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUID
 import Snap.Core
   ( finishWith, getResponse , modifyResponse
   , setResponseStatus, writeText)
@@ -29,11 +34,15 @@ import System.Directory
   , doesFileExist
   )
 import System.FilePath ((</>))
-import System.IO (hFlush, hGetEcho, hSetEcho, stdin, stdout)
+import System.IO
+  ( hFileSize, hFlush, hGetEcho, hSetEcho, openFile, stdin, stdout
+  , IOMode(ReadMode))
 import System.Posix (fileSize, getFileStatus)
 
 import Rescoyl.Types
-import Rescoyl.Utils (saveImageLayerToFile, saveImageLayerToFile')
+import Rescoyl.Utils
+  ( saveImageLayerToFile, startImageLayerToFile
+  , appendImageLayerToFile, completeImageLayerToFile)
 
 -- TODO Instead of generating the 404s, or 50Xs here, return a data type
 -- representing the failure.
@@ -315,24 +324,78 @@ listRepositories static namespace = do
 -- | Map (namespace, uuid) to an upload state.
 data TransientState = TransientState (TVar (Map (Text, Text) UploadState))
 
-data UploadState = UploadState
+data UploadState = UploadState FilePath (Decoder SHA256State) Int
 
 initRegistry2Backend :: FilePath -> IO Registry2Backend
 initRegistry2Backend static = do
   uploads <- atomically (newTVar M.empty)
   state <- return (TransientState uploads)
   return Registry2Backend
-    { v2SaveImageLayer = v2SaveImageLayer' state static
+    { v2StartImageLayer = v2StartImageLayer' state static
+    , v2ContinueImageLayer = v2ContinueImageLayer' state static
+    , v2CompleteImageLayer = v2CompleteImageLayer' state static
+    , v2GetImageLayerInfo = v2GetImageLayerInfo' static
     }
 
-v2SaveImageLayer' :: TransientState -> FilePath -> Text -> Text -> Handler App App (ByteString, Int)
-v2SaveImageLayer' (TransientState state) static namespace uuid = do
-  let dir = blobsDir static namespace </> (T.unpack uuid)
+v2StartImageLayer' :: TransientState -> FilePath -> Text -> Handler App App (Int, Text)
+v2StartImageLayer' (TransientState state) static namespace = do
+  uuid <- liftIO (UUID.toText <$> UUID.nextRandom)
+  let dir = blobsDir static namespace
   liftIO (createDirectoryIfMissing True dir)
   -- TODO how to bracket open/close with iterHandle in between ?
-  (checksum, size) <- saveImageLayerToFile "" (dir </> "layer")
+  (fn, dec, size) <- startImageLayerToFile dir
   liftIO (atomically (do
     uploads <- readTVar state
-    writeTVar state (M.insert (namespace, uuid) UploadState uploads)))
-  -- liftIO $ B.writeFile (dir </> "checksum") $ "sha256:" `B.append` checksum
-  return (checksum, size)
+    writeTVar state
+      (M.insert (namespace, uuid)
+        (UploadState fn dec size)
+        uploads)))
+  return (size, uuid)
+
+v2ContinueImageLayer' :: TransientState -> FilePath -> Text -> Text -> Handler App App Int
+v2ContinueImageLayer' (TransientState state) static namespace uuid = do
+  mupload <- liftIO (atomically (do
+    uploads <- readTVar state
+    let mupload = M.lookup (namespace, uuid) uploads
+    writeTVar state (M.delete (namespace, uuid) uploads)
+    return mupload
+    ))
+  case mupload of
+    Nothing -> error "TODO"
+    Just (UploadState fn dec n) -> do
+      -- TODO how to bracket open/close with iterHandle in between ?
+      (dec', size) <- appendImageLayerToFile fn dec n
+      liftIO (atomically (do
+        uploads <- readTVar state
+        writeTVar state
+          (M.insert (namespace, uuid)
+            (UploadState fn dec' size)
+            uploads)))
+      return size
+
+v2CompleteImageLayer' :: TransientState -> FilePath -> Text -> Text -> Handler App App (ByteString, Int)
+v2CompleteImageLayer' (TransientState state) static namespace uuid = do
+  mupload <- liftIO (atomically (do
+    uploads <- readTVar state
+    let mupload = M.lookup (namespace, uuid) uploads
+    writeTVar state (M.delete (namespace, uuid) uploads)
+    return mupload
+    ))
+  case mupload of
+    Nothing -> error "TODO"
+    Just (UploadState fn dec n) -> do
+      let dir = blobsDir static namespace
+      -- TODO how to bracket open/close with iterHandle in between ?
+      completeImageLayerToFile fn dec n dir
+
+v2GetImageLayerInfo' :: FilePath -> Text -> Text -> Handler App App (Maybe Int64)
+v2GetImageLayerInfo' static namespace digest = do
+  let dir = blobsDir static namespace
+      fn = dir </> T.unpack digest
+  b <- liftIO (doesFileExist fn) -- TODO try/catch
+  if b
+    then do
+      h <- liftIO (openFile fn ReadMode)
+      size <- liftIO (hFileSize h)
+      return (Just (fromIntegral size))
+    else return Nothing

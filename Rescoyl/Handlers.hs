@@ -24,14 +24,13 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
 import Data.Version (showVersion)
 import Snap.Core
   ( emptyResponse, finishWith, getHeader, getParam, getResponse, getsRequest
   , ifTop, logError, method
   , modifyResponse, pass, putResponse, readRequestBody
-  , setContentType, setContentLength, setHeader, setResponseStatus, writeLBS
-  , writeText
+  , setContentType, setHeader, setResponseStatus, writeLBS, writeText
+  , setContentLength
   , Method(..))
 import Snap.Snaplet (Handler)
 import Snap.Snaplet.Session (withSession)
@@ -471,17 +470,16 @@ v2StartUpload = do
   Just namespace <- getParam "namespace"
   Just _ <- getParam "repo"
   reg2 <- gets _registry2
-  uuid <- liftIO UUID.nextRandom
-  (digest, size) <- v2SaveImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
+  (size, uuid) <- v2StartImageLayer reg2 (T.decodeUtf8 namespace)
 
   -- Specs says that Location and UUID are actually opaque strings.
   -- The official registry also sets a ?_state= parameter.
   modifyResponse (setResponseStatus 202 "Accepted")
   modifyResponse (setContentType "text/plain; charset=utf-8")
   modifyResponse (setHeader "Location"
-    (B.append "/v2/quux/bar/blobs/uploads/" (UUID.toASCIIBytes uuid)))
+    (B.append "/v2/quux/bar/blobs/uploads/" (T.encodeUtf8 uuid)))
   modifyResponse setApiVersion
-  modifyResponse (setHeader "Docker-Upload-Uuid" (UUID.toASCIIBytes uuid))
+  modifyResponse (setHeader "Docker-Upload-Uuid" (T.encodeUtf8 uuid))
   modifyResponse (setRange 0 size)
 
 v2UploadChunk :: Handler App App ()
@@ -490,7 +488,7 @@ v2UploadChunk = do
   Just _ <- getParam "repo"
   Just uuid <- (>>= UUID.fromASCIIBytes) <$> getParam "uuid"
   reg2 <- gets _registry2
-  (digest, size) <- v2SaveImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
+  size <- v2ContinueImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
 
   modifyResponse (setResponseStatus 202 "Accepted")
   modifyResponse (setContentType "text/plain; charset=utf-8")
@@ -502,21 +500,41 @@ v2UploadChunk = do
 
 v2CompleteUpload :: Handler App App ()
 v2CompleteUpload = do
+  Just namespace <- getParam "namespace"
+  Just _ <- getParam "repo"
+  Just uuid <- (>>= UUID.fromASCIIBytes) <$> getParam "uuid"
+  reg2 <- gets _registry2
+  (digest, size) <- v2CompleteImageLayer reg2 (T.decodeUtf8 namespace) (UUID.toText uuid)
+  let digest' = B.concat ["sha256:", digest]
+
   modifyResponse (setResponseStatus 201 "Created")
   modifyResponse (setContentType "text/plain; charset=utf-8")
   modifyResponse setApiVersion
-  modifyResponse (setHeader "Docker-Content-Digest" "some-digest")
+  modifyResponse (setHeader "Docker-Content-Digest" digest')
   modifyResponse (setHeader "Location"
-    "/v2/quux/bar/blobs/some-digest")
+    (B.concat ["/v2/quux/bar/blobs/", digest']))
 
 v2HeadLayer :: Handler App App ()
 v2HeadLayer = do
-  modifyResponse (setResponseStatus 200 "OK")
-  modifyResponse (setContentType "application/octet-stream")
-  modifyResponse setApiVersion
-  modifyResponse (setHeader "Docker-Content-Digest" "some-digest")
-  -- The official registry adds Accept-Ranges, Cache-Control, Content-Length
-  -- and Etag headers
+  Just namespace <- getParam "namespace"
+  Just _ <- getParam "repo"
+  Just digest <- (B.drop (B.length "sha256:") <$>) <$> getParam "digest"
+  reg2 <- gets _registry2
+  msize <- v2GetImageLayerInfo reg2 (T.decodeUtf8 namespace) (T.decodeUtf8 digest)
+  case msize of
+    Just size -> do
+      modifyResponse (setResponseStatus 200 "OK")
+      modifyResponse (setContentType "application/octet-stream")
+      modifyResponse setApiVersion
+      modifyResponse (setHeader "Docker-Content-Digest" digest)
+      modifyResponse (setContentLength size)
+      -- The official registry adds Accept-Ranges, Cache-Control, Content-Length
+      -- and Etag headers
+    Nothing -> do
+      modifyResponse (setResponseStatus 404 "Not Found")
+      modifyResponse (setContentType "application/json")
+      modifyResponse setApiVersion
+      -- TODO The official registry sets a Content-Length (e.g. 157).
 
 setApiVersion = setHeader "Docker-Distribution-Api-Version" "registry/2.0"
 
