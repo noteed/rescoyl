@@ -25,12 +25,12 @@ case $1 in
   export REGISTRY_ID=$(docker run -d \
     -v `pwd`/self-private.key:/self-private.key \
     -v `pwd`/self-certificate.crt:/self-certificate.crt \
-    -e REGISTRY_HTTP_TLS_CERTIFICATE=/self-certificate.crt \
-    -e REGISTRY_HTTP_TLS_KEY=/self-private.key \
-    -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
     -e REGISTRY_LOG_LEVEL=debug \
     registry:2
     )
+#    -e REGISTRY_HTTP_TLS_CERTIFICATE=/self-certificate.crt \
+#    -e REGISTRY_HTTP_TLS_KEY=/self-private.key \
+#    -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
   export NGINX_CONF=registry2.local
   ;;
 "rescoyl")

@@ -71,6 +71,9 @@ data Registry2Backend = Registry2Backend
   , v2ContinueImageLayer :: Text -> Text -> Handler App App Int
   , v2CompleteImageLayer :: Text -> Text -> Handler App App (ByteString, Int)
   , v2GetImageLayerInfo :: Text -> Text -> Handler App App (Maybe Int64)
+  , v2ReadImageLayer :: Text -> Text -> Handler App App (Maybe L.ByteString)
+  , v2SaveManifest :: Text -> Text -> Text -> L.ByteString -> Handler App App ()
+  , v2ReadManifest :: Text -> Text -> Text -> Handler App App L.ByteString
   }
 
 -- | The minimal data that a server has about an image is its JSON meta-data.

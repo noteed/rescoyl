@@ -335,6 +335,9 @@ initRegistry2Backend static = do
     , v2ContinueImageLayer = v2ContinueImageLayer' state static
     , v2CompleteImageLayer = v2CompleteImageLayer' state static
     , v2GetImageLayerInfo = v2GetImageLayerInfo' static
+    , v2ReadImageLayer = v2ReadImageLayer' static
+    , v2SaveManifest = v2SaveManifest' static
+    , v2ReadManifest = v2ReadManifest' static
     }
 
 v2StartImageLayer' :: TransientState -> FilePath -> Text -> Handler App App (Int, Text)
@@ -399,3 +402,27 @@ v2GetImageLayerInfo' static namespace digest = do
       size <- liftIO (hFileSize h)
       return (Just (fromIntegral size))
     else return Nothing
+
+v2ReadImageLayer' :: FilePath -> Text -> Text -> Handler App App (Maybe L.ByteString)
+v2ReadImageLayer' static namespace digest = do
+  let dir = blobsDir static namespace
+      fn = dir </> T.unpack digest
+  b <- liftIO (doesFileExist fn) -- TODO try/catch
+  if b
+    then Just <$> liftIO (L.readFile fn)
+    else return Nothing
+
+v2SaveManifest' :: FilePath -> Text -> Text -> Text -> L.ByteString -> Handler App App ()
+v2SaveManifest' static namespace repo tag content = do
+  -- TODO Use STM or MVar to guard all file access.
+  let dir = repositoryPath static (T.encodeUtf8 namespace) (T.encodeUtf8 repo)
+  liftIO $ do
+    createDirectoryIfMissing True $ dir </> "manifests"
+    L.writeFile (dir </> "manifests" </> (T.unpack tag)) content
+
+v2ReadManifest' :: FilePath -> Text -> Text -> Text -> Handler App App L.ByteString
+v2ReadManifest' static namespace repo tag = do
+  -- TODO Use STM or MVar to guard all file access.
+  let dir = repositoryPath static (T.encodeUtf8 namespace) (T.encodeUtf8 repo)
+  liftIO $ do
+    L.readFile (dir </> "manifests" </> (T.unpack tag))

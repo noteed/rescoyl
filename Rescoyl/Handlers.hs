@@ -68,6 +68,7 @@ routes endpoints =
     if repo == "images" then pass else putRepository endpoints)
 
   , ("/v1/repositories/:repo/tags/:tag", ifTop $ method PUT putTag)
+  -- TODO Get on non-existing tag / directory is possible (and triggers a 500).
   , ("/v1/repositories/:namespace/:repo/tags/:tag", ifTop $
     method GET getTag <|> method PUT putTag)
 
@@ -87,7 +88,10 @@ routes endpoints =
   , ("/v2/:namespace/:repo/blobs/uploads", ifTop (method POST v2StartUpload))
   , ("/v2/:namespace/:repo/blobs/uploads/:uuid", ifTop
       (method PATCH v2UploadChunk <|> method PUT v2CompleteUpload))
-  , ("/v2/:namespace/:repo/blobs/:digest", ifTop (method HEAD v2HeadLayer))
+  , ("/v2/:namespace/:repo/blobs/:digest", ifTop
+      (method HEAD v2HeadLayer <|> method GET v2GetLayer))
+  , ("/v2/:namespace/:repo/manifests/:reference", ifTop
+      (method GET v2GetRepositoryManifest <|> method PUT v2SetRepositoryManifest))
 
   , ("/500", error "Intentional 500.")
   ]
@@ -459,7 +463,7 @@ v2Page :: Handler App App ()
 v2Page = do
   -- The official registry also sets charset=utf-8, which seems out
   -- of spec for application/json.
-  modifyResponse (setContentType "application/json")
+  modifyResponse (setContentType "application/json; charset=utf-8")
   modifyResponse setApiVersion
   writeLBS (encode (object []))
 
@@ -498,6 +502,7 @@ v2UploadChunk = do
   modifyResponse (setHeader "Docker-Upload-Uuid" (UUID.toASCIIBytes uuid))
   modifyResponse (setRange 0 size)
 
+-- TODO Use the digest parameter.
 v2CompleteUpload :: Handler App App ()
 v2CompleteUpload = do
   Just namespace <- getParam "namespace"
@@ -521,12 +526,13 @@ v2HeadLayer = do
   Just digest <- (B.drop (B.length "sha256:") <$>) <$> getParam "digest"
   reg2 <- gets _registry2
   msize <- v2GetImageLayerInfo reg2 (T.decodeUtf8 namespace) (T.decodeUtf8 digest)
+  let digest' = B.concat ["sha256:", digest]
   case msize of
     Just size -> do
       modifyResponse (setResponseStatus 200 "OK")
       modifyResponse (setContentType "application/octet-stream")
       modifyResponse setApiVersion
-      modifyResponse (setHeader "Docker-Content-Digest" digest)
+      modifyResponse (setHeader "Docker-Content-Digest" digest')
       modifyResponse (setContentLength size)
       -- The official registry adds Accept-Ranges, Cache-Control, Content-Length
       -- and Etag headers
@@ -535,6 +541,60 @@ v2HeadLayer = do
       modifyResponse (setContentType "application/json")
       modifyResponse setApiVersion
       -- TODO The official registry sets a Content-Length (e.g. 157).
+
+v2GetLayer :: Handler App App ()
+v2GetLayer = do
+  Just namespace <- getParam "namespace"
+  Just _ <- getParam "repo"
+  Just digest <- (B.drop (B.length "sha256:") <$>) <$> getParam "digest"
+  reg2 <- gets _registry2
+  mcontent <- v2ReadImageLayer reg2 (T.decodeUtf8 namespace) (T.decodeUtf8 digest)
+  let digest' = B.concat ["sha256:", digest]
+  case mcontent of
+    Just content -> do
+      modifyResponse (setResponseStatus 200 "OK")
+      modifyResponse (setContentType "application/octet-stream")
+      modifyResponse setApiVersion
+      modifyResponse (setHeader "Docker-Content-Digest" digest')
+      writeLBS content
+    Nothing -> do
+      modifyResponse (setResponseStatus 404 "Not Found")
+      modifyResponse (setContentType "application/json")
+      modifyResponse setApiVersion
+
+v2SetRepositoryManifest :: Handler App App ()
+v2SetRepositoryManifest = do
+  Just namespace <- getParam "namespace"
+  Just repo <- getParam "repo"
+  Just reference <- getParam "reference" -- tag or digest
+  body <- readRequestBody 65536 -- TODO Correct size, validate content.
+  reg2 <- gets _registry2
+  v2SaveManifest reg2 (T.decodeUtf8 namespace) (T.decodeUtf8 repo)
+    (T.decodeUtf8 reference) body -- TODO Only tag.
+
+  modifyResponse (setResponseStatus 201 "Created")
+  modifyResponse (setContentType "text/plain; charset=utf-8")
+  modifyResponse setApiVersion
+  --modifyResponse (setHeader "Docker-Content-Digest" digest)
+  -- TODO The official registry Loaction is a digest, not a tag.
+  modifyResponse (setHeader "Location"
+    (B.concat ["/v2/quux/bar/manifests/", reference]))
+
+v2GetRepositoryManifest :: Handler App App ()
+v2GetRepositoryManifest = do
+  Just namespace <- getParam "namespace"
+  Just repo <- getParam "repo"
+  Just reference <- getParam "reference" -- tag or digest
+  reg2 <- gets _registry2
+  content <- v2ReadManifest reg2 (T.decodeUtf8 namespace) (T.decodeUtf8 repo)
+    (T.decodeUtf8 reference) -- TODO Only tag.
+
+  modifyResponse (setResponseStatus 200 "OK")
+  modifyResponse (setContentType "application/json")
+  modifyResponse setApiVersion
+  --modifyResponse (setHeader "Docker-Content-Digest" digest)
+  -- TODO The official registry Loaction is a digest, not a tag.
+  writeLBS content
 
 setApiVersion = setHeader "Docker-Distribution-Api-Version" "registry/2.0"
 

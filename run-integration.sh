@@ -53,6 +53,7 @@ MITM_ID=$(docker run -d \
   )
 REGISTRY_IP=$(docker inspect $MITM_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
 #REGISTRY_IP=$(docker inspect $REGISTRY_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
+REGISTRY_IP=$(docker inspect $NGINX_ID | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
 
 # Setup a static DNS server so that the test container sees the tested
 # container as registry.local.
@@ -87,8 +88,9 @@ docker run --privileged --dns $DNS_IP -t -i \
 
 #  --volumes-from dind-rescoyl
 
+docker exec $NGINX_ID tail /var/log/nginx/access.log
 # Some cleanup.
-#docker kill $DNS $NGINX_ID $MITM_ID
-#docker rm $DNS $NGINX_ID $MITM_ID
+docker kill $DNS $NGINX_ID $MITM_ID
+docker rm $DNS $NGINX_ID $MITM_ID
 rm -f self-certificate.crt self-key-and-certificate.pem self-private.key
 rm -f nginx/registry.passwd
