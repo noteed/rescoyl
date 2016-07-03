@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-cse #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}

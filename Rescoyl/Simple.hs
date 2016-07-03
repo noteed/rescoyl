@@ -73,6 +73,7 @@ initUserBackend static = do
   return UserBackend
     { isAuthorized = isAuthorized' us
     , isAllowedToReadImage = isAllowedToReadImage' us static
+    , isAllowedToWriteNamespace = isAllowedToWriteNamespace'
     }
 
 readUsers :: FilePath -> IO Users
@@ -139,8 +140,8 @@ isAllowedToReadImage' us static mlogin image = do
     Just namespace -> return (Just namespace)
     Nothing -> return Nothing
 
-isAllowedToWriteNamespace :: Maybe Text -> IO (Maybe Text)
-isAllowedToWriteNamespace = return
+isAllowedToWriteNamespace' :: Maybe Text -> IO (Maybe Text)
+isAllowedToWriteNamespace' = error "TODO rescoyl/Rescoyl/Simple.hs::isAllowedToWriteNamespace"
 
 initRegistryBackend :: FilePath -> IO RegistryBackend
 initRegistryBackend static = do
